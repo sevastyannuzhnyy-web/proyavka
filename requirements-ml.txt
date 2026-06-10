@@ -1,0 +1,4 @@
+# torch ставится отдельно с CPU-индексом:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+spandrel>=0.4
+numpy>=1.26

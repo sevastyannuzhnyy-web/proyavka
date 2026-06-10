@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FAF9F6">
+<meta name="description" content="Проявка — сделаю твои фото чётче и живее">
+<title>Проявка — сделаю твои фото чётче и живее</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1 class="wordmark">Проявка</h1>
+  <p class="tagline">Сделаю твои фото чётче и живее</p>
+
+  <section class="frame" id="frame" data-state="idle">
+    <label class="dropzone" id="dropzone">
+      <svg class="dz-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="6" y="8" width="36" height="32" rx="3"/>
+        <circle cx="18" cy="19" r="3.5"/>
+        <path d="M6 34l10-9 8 7 9-10 9 9"/>
+      </svg>
+      <span class="dz-text">Брось фото сюда<br>или нажми, чтобы выбрать</span>
+      <span class="dz-hint">JPG, PNG или HEIC</span>
+      <input type="file" id="file" accept="image/*">
+    </label>
+
+    <div class="stage" id="stage" hidden>
+      <img id="imgBefore" alt="до обработки" draggable="false">
+      <img id="imgAfter" alt="после обработки" draggable="false">
+      <div class="divider" id="divider" hidden>
+        <div class="handle" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l-5 6 5 6M15 6l5 6-5 6"/></svg>
+        </div>
+      </div>
+      <span class="chip chip-before" hidden>до</span>
+      <span class="chip chip-after" hidden>после</span>
+    </div>
+  </section>
+
+  <div class="progressline" id="progressline" hidden><div class="bar" id="bar"></div></div>
+  <p class="status" id="status" hidden></p>
+
+  <div class="controls" id="controls">
+    <span class="controls-label">увеличить</span>
+    <div class="seg" role="group" aria-label="во сколько раз увеличить">
+      <button class="seg-btn active" data-scale="2" type="button">2×</button>
+      <button class="seg-btn" data-scale="4" type="button">4×</button>
+    </div>
+  </div>
+
+  <div class="actions" id="actions" hidden>
+    <div class="download-wrap">
+      <button class="btn-primary" id="downloadBtn" type="button">Скачать в полном размере</button>
+    </div>
+    <p class="download-hint" id="downloadHint" hidden>не сохранилось? подержи палец на правой половине фото и выбери «Сохранить»</p>
+    <button class="btn-ghost" id="retryBtn" type="button">Попробовать по-другому</button>
+    <p class="retry-hint" id="retryHint">то же фото, другой характер обработки</p>
+    <button class="btn-link" id="resetBtn" type="button">загрузить другое фото</button>
+  </div>
+
+  <footer>сделано Севой · с любовью</footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

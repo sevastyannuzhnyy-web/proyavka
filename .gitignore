@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+models/*.pth
+bin/
+node_modules/
+.pytest_cache/
+*.png.tmp
+.DS_Store
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+shots/

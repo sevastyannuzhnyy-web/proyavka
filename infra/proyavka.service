@@ -1,0 +1,20 @@
+[Unit]
+Description=Проявка — AI-улучшайзер фотографий
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proyavka
+Environment=ENGINE=auto
+Environment=PORT=8000
+Environment=DATA_DIR=/var/lib/proyavka
+Environment=MODELS_DIR=/opt/proyavka/models
+ExecStart=/opt/proyavka/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=3
+# CPU-инференс жрёт все ядра — не даём задушить ssh и соседей
+CPUWeight=80
+MemoryMax=6G
+
+[Install]
+WantedBy=multi-user.target
