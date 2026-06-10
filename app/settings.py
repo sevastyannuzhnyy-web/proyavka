@@ -18,3 +18,6 @@ MAX_OUTPUT_MP = float(os.environ.get("MAX_OUTPUT_MP", "64"))
 QUEUE_MAX = int(os.environ.get("QUEUE_MAX", "6"))
 JOB_TTL_HOURS = float(os.environ.get("JOB_TTL_HOURS", "24"))
 TORCH_THREADS = int(os.environ.get("TORCH_THREADS", "0"))  # 0 = все ядра
+# Какие модели спрятать (через запятую). На CPU прячем тяжёлую detail:
+# x4plus — ~2 мин/Мп, это 6+ минут на фото.
+MODELS_DISABLE = set(filter(None, os.environ.get("MODELS_DISABLE", "").split(",")))

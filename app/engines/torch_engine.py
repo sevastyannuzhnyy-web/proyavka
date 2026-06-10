@@ -33,7 +33,8 @@ class TorchEngine(Engine):
 
     def available_models(self):
         return [k for k, (f, _) in MODEL_FILES.items()
-                if (settings.MODELS_DIR / f).exists()]
+                if k not in settings.MODELS_DISABLE
+                and (settings.MODELS_DIR / f).exists()]
 
     def _net(self, key: str):
         if key not in self._cache:

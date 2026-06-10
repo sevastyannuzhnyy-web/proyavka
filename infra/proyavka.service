@@ -7,6 +7,8 @@ Type=simple
 WorkingDirectory=/opt/proyavka
 Environment=ENGINE=auto
 Environment=PORT=8000
+# на CPU тяжёлая detail-модель слишком медленная; с GPU (ncnn) вернётся сама
+Environment=MODELS_DISABLE=detail
 Environment=DATA_DIR=/var/lib/proyavka
 Environment=MODELS_DIR=/opt/proyavka/models
 ExecStart=/opt/proyavka/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
