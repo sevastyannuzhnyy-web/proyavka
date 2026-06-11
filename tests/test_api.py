@@ -79,7 +79,7 @@ def test_rejects_garbage(client):
                     files={"photo": ("x.jpg", io.BytesIO(b"not a photo"), "image/jpeg")},
                     data={"scale": 2, "model": "soft"})
     assert r.status_code == 400
-    assert "фотография" in r.json()["detail"]
+    assert "photo" in r.json()["detail"]
 
 
 def test_rejects_bad_scale(client):

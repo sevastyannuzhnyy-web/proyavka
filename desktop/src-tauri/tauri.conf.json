@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Проявка",
+  "productName": "Photo Enhancer",
   "version": "1.0.0",
   "identifier": "com.seva.proyavka",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Проявка",
+        "title": "Photo Enhancer",
         "width": 720,
         "height": 880,
         "minWidth": 420,

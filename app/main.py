@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from . import settings
 from .jobs import JobManager
 
-app = FastAPI(title="Проявка", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Photo Enhancer", docs_url=None, redoc_url=None, openapi_url=None)
 manager = JobManager()
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -35,12 +35,12 @@ async def create_job(photo: UploadFile = File(...),
                      scale: int = Form(2),
                      model: str = Form("soft")):
     if scale not in (2, 4):
-        raise HTTPException(400, "Увеличение бывает 2× или 4×")
+        raise HTTPException(400, "Scale must be 2× or 4×")
     if model not in manager.engine.available_models():
-        raise HTTPException(400, "Такой обработки нет")
-    # отсекаем гигантский body до чтения в RAM (Starlette спулит на диск, .size есть)
+        raise HTTPException(400, "That option isn’t available")
+    # reject a giant body before reading into RAM (Starlette spools to disk, .size is set)
     if photo.size and photo.size > settings.MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(400, f"Файл больше {settings.MAX_UPLOAD_MB} МБ — пришли фото поменьше")
+        raise HTTPException(400, f"File is larger than {settings.MAX_UPLOAD_MB} MB — send a smaller photo")
     data = await photo.read()
     try:
         # декод/ресайз — синхронный и тяжёлый: уводим из event loop,
@@ -58,7 +58,7 @@ async def create_job(photo: UploadFile = File(...),
 def job_status(jid: str):
     job = manager.get(jid)
     if job is None:
-        raise HTTPException(404, "Эта проявка уже убрана с полки — загрузи фото заново")
+        raise HTTPException(404, "This job is no longer available — upload the photo again")
     body = {"status": job.status, "progress": job.progress}
     if job.status == "queued":
         body["position"] = manager.queue_position(job)

@@ -74,7 +74,7 @@ async fn create_job(
     scale: i32,
     model: String,
 ) -> Result<String, String> {
-    let name = model_name(&model).ok_or("Такой обработки нет")?;
+    let name = model_name(&model).ok_or("That option isn’t available")?;
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
 
     let dir = work_dir(&app).join(&id);
@@ -164,7 +164,7 @@ async fn run_upscale(
     }
 
     if !upscaled.exists() {
-        return Err("Обработка не получилась — попробуй ещё раз".into());
+        return Err("Processing failed — please try again".into());
     }
 
     // scale 2 = апскейл 4х + даунскейл вдвое; result в исходном формате
@@ -206,18 +206,18 @@ fn job_status(jobs: State<'_, Jobs>, id: String) -> Result<Job, String> {
         .unwrap()
         .get(&id)
         .cloned()
-        .ok_or_else(|| "Эта проявка уже убрана с полки".into())
+        .ok_or_else(|| "This job is no longer available".into())
 }
 
 #[tauri::command]
 fn read_image(jobs: State<'_, Jobs>, id: String, which: String) -> Result<Vec<u8>, String> {
     let map = jobs.0.lock().unwrap();
-    let job = map.get(&id).ok_or("Нет такой проявки")?;
+    let job = map.get(&id).ok_or("No such job")?;
     let path = match which.as_str() {
         "original" => job.original_path.clone(),
         _ => job.result_path.clone(),
     }
-    .ok_or("Файл ещё не готов")?;
+    .ok_or("File isn’t ready yet")?;
     std::fs::read(path).map_err(|e| e.to_string())
 }
 
@@ -225,8 +225,8 @@ fn read_image(jobs: State<'_, Jobs>, id: String, which: String) -> Result<Vec<u8
 async fn save_result(app: tauri::AppHandle, jobs: State<'_, Jobs>, id: String) -> Result<(), String> {
     let path = {
         let map = jobs.0.lock().unwrap();
-        let job = map.get(&id).ok_or("Нет такой проявки")?;
-        job.result_path.clone().ok_or("Результат ещё не готов")?
+        let job = map.get(&id).ok_or("No such job")?;
+        job.result_path.clone().ok_or("Result isn’t ready yet")?
     };
     let src = PathBuf::from(&path);
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
@@ -235,7 +235,7 @@ async fn save_result(app: tauri::AppHandle, jobs: State<'_, Jobs>, id: String) -
     let dest = app
         .dialog()
         .file()
-        .set_file_name(format!("проявка.{ext}"))
+        .set_file_name(format!("upscaled.{ext}"))
         .blocking_save_file();
 
     if let Some(dest) = dest {
@@ -288,5 +288,5 @@ pub fn run() {
             save_result
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Проявка");
+        .expect("error while running the app");
 }

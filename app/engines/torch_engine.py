@@ -42,10 +42,10 @@ class TorchEngine(Engine):
             try:
                 fname, tile = MODEL_FILES[key]
             except KeyError:
-                raise EngineError("Такой обработки нет")
+                raise EngineError("That option isn’t available")
             path = settings.MODELS_DIR / fname
             if not path.exists():
-                raise EngineError("Эта обработка ещё не установлена на сервере")
+                raise EngineError("This option isn’t installed on the server yet")
             desc = ModelLoader().load_from_file(str(path))
             desc.model.eval()
             self._cache[key] = (desc.model, desc.scale, tile)

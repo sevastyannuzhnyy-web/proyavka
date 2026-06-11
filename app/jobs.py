@@ -65,18 +65,18 @@ class JobManager:
     def submit(self, data: bytes, filename: str, scale: int, model: str) -> Job:
         if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
             raise ValueError(
-                f"Файл больше {settings.MAX_UPLOAD_MB} МБ — пришли фото поменьше")
+                f"File is larger than {settings.MAX_UPLOAD_MB} MB — send a smaller photo")
         with self.lock:
             queued = sum(1 for j in self.jobs.values()
                          if j.status in ("queued", "processing"))
         if queued >= settings.QUEUE_MAX:
-            raise RuntimeError("Сейчас много фотографий в работе — попробуй через минутку")
+            raise RuntimeError("Lots of photos in the queue right now — try again in a minute")
 
         try:
             img = Image.open(io.BytesIO(data))
             img.load()
         except (UnidentifiedImageError, OSError):
-            raise ValueError("Не получилось открыть файл — это точно фотография?")
+            raise ValueError("Couldn’t open the file — is it a photo?")
 
         out_ext = ".png" if img.format == "PNG" else ".jpg"
         img = ImageOps.exif_transpose(img)
@@ -152,7 +152,7 @@ class JobManager:
                 job.error = str(e)
             except Exception:
                 job.status = "error"
-                job.error = "Ой, что-то заело. Фото целое — просто попробуй ещё раз"
+                job.error = "Something went wrong. The photo’s fine — just try again"
 
     def _cleaner(self):
         while True:

@@ -36,7 +36,7 @@ class NcnnEngine(Engine):
                 progress: ProgressCb) -> None:
         name = MODEL_MAP.get(model)
         if not name:
-            raise EngineError("Такой обработки нет")
+            raise EngineError("That option isn’t available")
         tmp = dst.with_suffix(".ncnn.png")
         cmd = [
             settings.NCNN_BIN,
@@ -63,9 +63,9 @@ class NcnnEngine(Engine):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-                raise EngineError("Обработка не получилась — попробуй ещё раз")
+                raise EngineError("Processing failed — please try again")
             if proc.returncode != 0 or not tmp.exists():
-                raise EngineError("Обработка не получилась — попробуй ещё раз")
+                raise EngineError("Processing failed — please try again")
 
             result = Image.open(tmp)
             if scale != 4:

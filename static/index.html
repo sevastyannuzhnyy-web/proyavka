@@ -1,18 +1,15 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#FAF9F6">
-<meta name="description" content="Проявка — сделаю твои фото чётче и живее">
-<title>Проявка — сделаю твои фото чётче и живее</title>
+<meta name="theme-color" content="#0E0E10">
+<meta name="description" content="Make your photos sharper and cleaner">
+<title>Photo Enhancer</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
-  <h1 class="wordmark">Проявка</h1>
-  <p class="tagline">Сделаю твои фото чётче и живее</p>
-
   <section class="frame" id="frame" data-state="idle">
     <label class="dropzone" id="dropzone">
       <svg class="dz-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -20,21 +17,21 @@
         <circle cx="18" cy="19" r="3.5"/>
         <path d="M6 34l10-9 8 7 9-10 9 9"/>
       </svg>
-      <span class="dz-text">Брось фото сюда<br>или нажми, чтобы выбрать</span>
-      <span class="dz-hint">JPG, PNG или HEIC</span>
+      <span class="dz-text">Drop a photo here<br>or click to choose</span>
+      <span class="dz-hint">JPG, PNG or HEIC</span>
       <input type="file" id="file" accept="image/*">
     </label>
 
     <div class="stage" id="stage" hidden>
-      <img id="imgBefore" alt="до обработки" draggable="false">
-      <img id="imgAfter" alt="после обработки" draggable="false">
+      <img id="imgBefore" alt="before" draggable="false">
+      <img id="imgAfter" alt="after" draggable="false">
       <div class="divider" id="divider" hidden>
         <div class="handle" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l-5 6 5 6M15 6l5 6-5 6"/></svg>
         </div>
       </div>
-      <span class="chip chip-before" hidden>до</span>
-      <span class="chip chip-after" hidden>после</span>
+      <span class="chip chip-before" hidden>before</span>
+      <span class="chip chip-after" hidden>after</span>
     </div>
   </section>
 
@@ -42,27 +39,25 @@
   <p class="status" id="status" hidden></p>
 
   <div class="controls" id="controls">
-    <div class="seg" role="group" aria-label="размер результата">
+    <div class="seg" role="group" aria-label="output size">
       <button class="seg-btn active" data-scale="2" type="button">
-        <span class="seg-word">Для экрана</span><span class="seg-mult">2×</span>
+        <span class="seg-word">For screen</span><span class="seg-mult">2×</span>
       </button>
       <button class="seg-btn" data-scale="4" type="button">
-        <span class="seg-word">Для печати</span><span class="seg-mult">4×</span>
+        <span class="seg-word">For print</span><span class="seg-mult">4×</span>
       </button>
     </div>
   </div>
 
   <div class="actions" id="actions" hidden>
     <div class="download-wrap">
-      <button class="btn-primary" id="downloadBtn" type="button">Скачать в полном размере</button>
+      <button class="btn-primary" id="downloadBtn" type="button">Download full size</button>
     </div>
-    <p class="download-hint" id="downloadHint" hidden>Не сохранилось? Подержи палец на половине «после» и выбери «Сохранить изображение»</p>
-    <button class="btn-ghost" id="retryBtn" type="button">Попробовать по-другому</button>
-    <p class="retry-hint" id="retryHint">то же фото, другой характер обработки</p>
-    <button class="btn-link" id="resetBtn" type="button">загрузить другое фото</button>
+    <p class="download-hint" id="downloadHint" hidden>Didn’t save? Press and hold the “after” side and choose “Save image”</p>
+    <button class="btn-ghost" id="retryBtn" type="button">Try another look</button>
+    <p class="retry-hint" id="retryHint">same photo, different style</p>
+    <button class="btn-link" id="resetBtn" type="button">choose another photo</button>
   </div>
-
-  <footer>сделано Севой · с любовью</footer>
 </main>
 <script src="api.js"></script>
 <script src="app.js"></script>
