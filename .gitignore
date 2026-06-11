@@ -11,4 +11,7 @@ node_modules/
 .DS_Store
 desktop/src-tauri/target/
 desktop/src-tauri/binaries/
+desktop/src-tauri/resources/models/
+desktop/src-tauri/gen/
 shots/
+shots-prod/

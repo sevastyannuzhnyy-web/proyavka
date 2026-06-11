@@ -1,0 +1,50 @@
+name: Сборка приложения «Проявка»
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - name: Кэш cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Скачать движок и модели
+        shell: bash
+        run: bash desktop/src-tauri/scripts/fetch-assets.sh ${{ matrix.triple }}
+
+      - name: Установить tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Собрать
+        working-directory: desktop/src-tauri
+        run: cargo tauri build --target ${{ matrix.triple }}
+
+      - name: Выложить артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: proyavka-${{ matrix.triple }}
+          path: |
+            desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/${{ matrix.triple }}/release/bundle/msi/*.msi
+          if-no-files-found: warn
