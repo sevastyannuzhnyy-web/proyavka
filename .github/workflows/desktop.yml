@@ -35,11 +35,9 @@ jobs:
       - name: Установить tauri-cli
         run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Дымовой тест движка на Windows (софтверный Vulkan)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        shell: bash
-        run: bash desktop/src-tauri/scripts/win-smoke.sh ${{ matrix.triple }}
+      # win-smoke.sh оставлен в репо для локального запуска на реальной Windows
+      # с GPU; на GPU-less раннере GitHub софтверный Vulkan (lavapipe) не
+      # инициализируется (vkCreateInstance -9), поэтому в CI его не гоняем.
 
       - name: Собрать
         working-directory: desktop/src-tauri
