@@ -15,8 +15,11 @@ echo "mesa: $url"
 curl -fL --retry 3 -o mesa.7z "$url"
 7z x -y mesa.7z -omesa >/dev/null
 ICD="$(find mesa -name 'lvp_icd.x86_64.json' | head -1)"
+ICDDIR="$(cd "$(dirname "$ICD")" && pwd -W 2>/dev/null || cd "$(dirname "$ICD")" && pwd)"
 export VK_ICD_FILENAMES="$(pwd)/$ICD"
-echo "ICD: $VK_ICD_FILENAMES"
+# каталог с vulkan_lvp.dll — в PATH, иначе его зависимые DLL не загрузятся (-9)
+export PATH="$ICDDIR:$PATH"
+echo "ICD: $VK_ICD_FILENAMES"; echo "ICDDIR: $ICDDIR"
 echo "::endgroup::"
 
 echo "::group::Тестовое фото + прогон движка"
