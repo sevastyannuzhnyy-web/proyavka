@@ -238,19 +238,25 @@ main {
 
 .seg-btn {
   font: inherit;
-  font-size: 13px;
   border: 0;
   background: transparent;
   color: var(--text-2);
   border-radius: 99px;
-  padding: 8px 16px;
+  padding: 7px 16px;
   cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
 }
+
+.seg-word { font-size: 13px; }
+.seg-mult { font-size: 12px; opacity: 0.6; }
 
 .seg-btn.active {
   background: var(--text);
   color: #fff;
 }
+.seg-btn.active .seg-mult { opacity: 0.7; }
 
 /* ---- результат ---- */
 
