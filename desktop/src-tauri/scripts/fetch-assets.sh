@@ -15,9 +15,14 @@ case "$TRIPLE" in
   *) echo "неизвестный triple: $TRIPLE"; exit 1 ;;
 esac
 
-tmp="$(mktemp -d)"
+# относительный tmp (а не mktemp /tmp): на Windows git-bash отдаёт MSYS-путь
+# /tmp/..., который нативный Windows-python не понимает — относительный путь
+# одинаково читают и bash-curl, и нативный python
+PY="$(command -v python3 || command -v python)"
+tmp="_fetch_tmp"
+rm -rf "$tmp"; mkdir -p "$tmp/re"
 curl -fL --retry 3 -o "$tmp/re.zip" "$BASE/$ZIP"
-python3 -c "import zipfile; zipfile.ZipFile('$tmp/re.zip').extractall('$tmp/re')"
+"$PY" -c "import zipfile; zipfile.ZipFile('$tmp/re.zip').extractall('$tmp/re')"
 cp "$tmp/re/$BIN" "$OUT"
 chmod +x "$OUT" 2>/dev/null || true
 cp "$tmp/re/models/realesrgan-x4plus."* "$tmp/re/models/realesrgan-x4plus-anime."* resources/models/
