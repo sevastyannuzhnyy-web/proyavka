@@ -245,6 +245,37 @@ async fn save_result(app: tauri::AppHandle, jobs: State<'_, Jobs>, id: String) -
     Ok(())
 }
 
+#[tauri::command]
+async fn save_all(app: tauri::AppHandle, jobs: State<'_, Jobs>, ids: Vec<String>) -> Result<(), String> {
+    let paths: Vec<(String, String)> = {
+        let map = jobs.0.lock().unwrap();
+        ids.iter()
+            .filter_map(|id| map.get(id).and_then(|j| j.result_path.clone()))
+            .map(|p| {
+                let ext = PathBuf::from(&p)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("jpg")
+                    .to_string();
+                (p, ext)
+            })
+            .collect()
+    };
+    if paths.is_empty() {
+        return Ok(());
+    }
+    use tauri_plugin_dialog::DialogExt;
+    let dir = app.dialog().file().blocking_pick_folder();
+    if let Some(dir) = dir {
+        let dirpath = dir.into_path().map_err(|e| e.to_string())?;
+        for (i, (src, ext)) in paths.iter().enumerate() {
+            let dest = dirpath.join(format!("upscaled-{}.{}", i + 1, ext));
+            std::fs::copy(src, dest).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -285,7 +316,8 @@ pub fn run() {
             create_job,
             job_status,
             read_image,
-            save_result
+            save_result,
+            save_all
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

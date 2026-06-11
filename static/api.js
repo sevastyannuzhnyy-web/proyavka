@@ -94,6 +94,10 @@
           return null; // app.js поймёт, что blob не нужен
         });
       },
+      saveAll: function (ids) {
+        // десктоп: выбрать папку и сложить все результаты туда
+        return invoke("save_all", { ids: ids });
+      },
       _urls: {}
     };
   })();

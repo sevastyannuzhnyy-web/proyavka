@@ -1,6 +1,6 @@
-"""E2E-прогон UI через Playwright + скриншоты всех состояний.
+"""E2E for the multi-photo flow + screenshots.
 
-Запуск: сервер должен крутиться (ENGINE=fake для локалки):
+Usage (server must be running, ENGINE=fake for local):
   .venv/bin/python tests/e2e_playwright.py http://127.0.0.1:8077 shots/
 """
 import sys
@@ -15,14 +15,12 @@ OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "shots")
 OUT.mkdir(exist_ok=True)
 
 
-def make_test_photo(path: Path):
-    """Маленькое «фото» с деталями, чтобы апскейл было видно."""
-    img = Image.new("RGB", (320, 400), (244, 240, 232))
+def make_photo(path, seed):
+    img = Image.new("RGB", (320, 400), (244 - seed * 20, 240, 232))
     d = ImageDraw.Draw(img)
     for i in range(0, 320, 16):
         d.line([(i, 0), (i, 400)], fill=(200 - i % 60, 150, 120), width=2)
-    d.ellipse([80, 100, 240, 260], fill=(163, 90, 60), outline=(27, 26, 23), width=3)
-    d.text((100, 320), "проявка тест", fill=(27, 26, 23))
+    d.ellipse([80, 100, 240, 260], fill=(163, 90 + seed * 30, 60), outline=(27, 26, 23), width=3)
     img.save(path, "JPEG", quality=88)
 
 
@@ -34,53 +32,68 @@ def shoot(page, name):
 def run(playwright, viewport, tag):
     browser = playwright.chromium.launch()
     page = browser.new_page(viewport=viewport)
-    photo = OUT / "_test_photo.jpg"
-    make_test_photo(photo)
+
+    photos = []
+    for i in range(3):
+        p = OUT / f"_test_{i}.jpg"
+        make_photo(p, i)
+        photos.append(str(p))
 
     print(f"[{tag}] {BASE}")
     page.goto(BASE, wait_until="networkidle")
     shoot(page, f"{tag}-1-idle.png")
 
-    # загрузка файла
-    page.set_input_files("#file", str(photo))
+    # choose THREE photos at once
+    page.set_input_files("#file", photos)
 
-    # processing: ждём появления прогресса
-    page.wait_for_selector("#progressline:not([hidden])", timeout=10000)
-    time.sleep(0.8)
-    shoot(page, f"{tag}-2-processing.png")
+    # staged grid: 3 thumbnails, primary enabled, says "Enhance 3 photos"
+    page.wait_for_selector(".thumb", timeout=10000)
+    expect(page.locator(".thumb")).to_have_count(3)
+    page.wait_for_function(
+        "() => { const b = document.getElementById('primaryBtn');"
+        "return b && !b.disabled && /Enhance 3/.test(b.textContent); }",
+        timeout=10000)
+    shoot(page, f"{tag}-2-staged.png")
 
-    # done: слайдер и кнопки
-    page.wait_for_selector('#frame[data-state="done"]', timeout=180000)
-    page.wait_for_selector("#actions:not([hidden])", timeout=5000)
-    time.sleep(1.5)  # авто-проезд слайдера
-    shoot(page, f"{tag}-3-done.png")
+    # start
+    page.click("#primaryBtn")
 
-    # подвигать слайдер
+    # all three done
+    page.wait_for_function(
+        "() => document.querySelectorAll('.thumb[data-status=\"done\"]').length === 3",
+        timeout=180000)
+    page.wait_for_function(
+        "() => /Save all/.test(document.getElementById('primaryBtn').textContent)",
+        timeout=5000)
+    shoot(page, f"{tag}-3-done-grid.png")
+
+    # open first result → overlay slider
+    page.locator(".thumb").first.click()
+    page.wait_for_selector("#overlay:not([hidden])", timeout=5000)
+    time.sleep(1.4)  # auto-sweep
+    shoot(page, f"{tag}-4-overlay.png")
+
+    # drag the slider
     box = page.locator("#stage").bounding_box()
-    page.mouse.move(box["x"] + box["width"] * 0.7, box["y"] + box["height"] / 2)
+    page.mouse.move(box["x"] + box["width"] * 0.3, box["y"] + box["height"] / 2)
     page.mouse.down()
-    page.mouse.move(box["x"] + box["width"] * 0.25, box["y"] + box["height"] / 2, steps=8)
+    page.mouse.move(box["x"] + box["width"] * 0.7, box["y"] + box["height"] / 2, steps=8)
     page.mouse.up()
-    shoot(page, f"{tag}-4-slider.png")
 
-    # скачивание
+    # per-photo save
     with page.expect_download(timeout=30000) as dl:
-        page.click("#downloadBtn")
-    download = dl.value
-    size = Path(download.path()).stat().st_size
-    assert size > 1000, "скачанный файл подозрительно мал"
-    print(f"  ⬇ скачано: {download.suggested_filename} ({size} байт)")
+        page.click("#saveBtn")
+    assert Path(dl.value.path()).stat().st_size > 1000, "saved file too small"
+    print(f"  ⬇ saved: {dl.value.suggested_filename}")
 
-    # попробовать по-другому → снова processing → done
-    if page.locator("#retryBtn").is_visible():
-        page.click("#retryBtn")
-        page.wait_for_selector('#frame[data-state="done"]', timeout=180000)
-        shoot(page, f"{tag}-5-retry-done.png")
+    # close overlay
+    page.click("#overlayClose")
+    expect(page.locator("#overlay")).to_be_hidden()
 
-    # сброс
-    page.click("#resetBtn")
-    expect(page.locator('#frame[data-state="idle"]')).to_be_visible()
-    print(f"  ✓ [{tag}] полный сценарий пройден")
+    # add one more (re-opens picker) — verify "Add more" present
+    expect(page.locator("#addBtn")).to_be_visible()
+
+    print(f"  ✓ [{tag}] multi-photo flow passed")
     browser.close()
 
 

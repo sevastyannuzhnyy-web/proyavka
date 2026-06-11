@@ -1,375 +1,343 @@
-/* Проявка — логика одной страницы. Без зависимостей. */
+/* Upscaler — multi-photo flow. No dependencies.
+   Drop one or many → staged previews → press Enhance → queue → review each. */
 (function () {
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
 
+  var dropzone = $("dropzone"), fileInput = $("file");
+  var grid = $("grid"), statusEl = $("status"), controls = $("controls");
+  var actions = $("actions"), primaryBtn = $("primaryBtn"), addBtn = $("addBtn"), clearBtn = $("clearBtn");
+  var overlay = $("overlay"), overlayClose = $("overlayClose");
   var frame = $("frame"), stage = $("stage");
-  var fileInput = $("file");
-  var imgBefore = $("imgBefore"), imgAfter = $("imgAfter");
-  var divider = $("divider");
+  var imgBefore = $("imgBefore"), imgAfter = $("imgAfter"), divider = $("divider");
   var chips = document.querySelectorAll(".chip");
-  var progressline = $("progressline"), bar = $("bar");
-  var statusEl = $("status");
-  var controls = $("controls");
-  var actions = $("actions");
-  var downloadBtn = $("downloadBtn"), downloadHint = $("downloadHint");
-  var retryBtn = $("retryBtn"), retryHint = $("retryHint"), resetBtn = $("resetBtn");
+  var saveBtn = $("saveBtn"), retryBtn = $("retryBtn"), retryHint = $("retryHint");
 
   var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
   var API = window.Proyavka;
-  var DOWNLOAD_LABEL = API.mode === "desktop" ? "Save image"
+  var SAVE_LABEL = API.mode === "desktop" ? "Save image"
     : (isTouch ? "Save photo" : "Download full size");
 
-  var PHRASES = [
-    "Looking into the details…",
-    "Drawing in light and shadow…",
-    "Sharpening up…",
-    "Smoothing things out…",
-    "Final touches…"
-  ];
-  var PATIENCE = "Large photos take a little longer — almost there…";
-
-  var state = {
-    scale: 2,
-    models: ["soft"],
-    modelIdx: 0,
-    maxUploadMb: 30,
-    blob: null,          // что отправляем (ужатое или оригинал)
-    previewUrl: null,
-    jobId: null,
-    pollTimer: null,
-    pollFails: 0,
-    phraseTimer: null,
-    patienceTimer: null,
-    visualP: 0,          // плавный прогресс 0..100
-    targetP: 0,
-    raf: 0,
-    wakeLock: null,
-    sliderPos: 50,
-    chipTimer: null,
-    resultUrl: null
-  };
-
-  downloadBtn.textContent = DOWNLOAD_LABEL;
+  var state = { scale: 2, models: ["soft"], maxUploadMb: 30, running: false, seq: 0, wakeLock: null };
+  var items = [];          // {id, file, name, blob, previewUrl, status, progress, jobId, beforeUrl, resultUrl, modelIdx, thumbEl, fails}
+  var current = null;      // item shown in overlay
+  var sliderPos = 50, chipTimer = null;
 
   API.meta().then(function (m) {
     if (m.models && m.models.length) state.models = m.models;
     if (m.maxUploadMb) state.maxUploadMb = m.maxUploadMb;
-    if (state.models.length < 2) {
-      retryBtn.hidden = true;
-      retryHint.hidden = true;
-    }
   }).catch(function () {});
 
-  /* ---------- выбор файла ---------- */
+  /* ---------- choosing files ---------- */
 
   fileInput.addEventListener("change", function () {
-    if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+    if (fileInput.files && fileInput.files.length) onFiles(fileInput.files);
+    fileInput.value = "";
   });
+  addBtn.addEventListener("click", function () { fileInput.click(); });
 
   ["dragover", "dragenter"].forEach(function (ev) {
-    frame.addEventListener(ev, function (e) {
-      e.preventDefault();
-      frame.classList.add("dragover");
-    });
+    document.addEventListener(ev, function (e) { e.preventDefault(); dropzone.classList.add("dragover"); });
   });
   ["dragleave", "drop"].forEach(function (ev) {
-    frame.addEventListener(ev, function (e) {
-      e.preventDefault();
-      frame.classList.remove("dragover");
-    });
+    document.addEventListener(ev, function (e) { e.preventDefault(); dropzone.classList.remove("dragover"); });
   });
-  frame.addEventListener("drop", function (e) {
-    if (frame.dataset.state !== "idle") return;
-    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleFile(f);
+  document.addEventListener("drop", function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files;
+    if (f && f.length && !state.running) onFiles(f);
   });
 
-  function handleFile(file) {
-    setStatus("Getting your photo ready…");
-    show(statusEl);
+  function onFiles(list) {
+    Array.prototype.slice.call(list).forEach(function (file) {
+      if (file.type && file.type.indexOf("image/") !== 0 && !/\.(jpe?g|png|heic|webp)$/i.test(file.name)) return;
+      addItem(file);
+    });
+    refreshUI();
+  }
+
+  function addItem(file) {
+    var item = { id: ++state.seq, file: file, name: file.name || "photo.jpg",
+                 status: "loading", progress: 0, modelIdx: 0 };
+    items.push(item);
+    renderThumb(item);
     shrink(file).then(function (blob) {
       var send = blob || file;
       if (send.size > state.maxUploadMb * 1048576) {
-        permanentFail("File is larger than " + state.maxUploadMb + " MB — try a smaller photo");
-        return;
+        item.status = "error"; item.error = "Too large (max " + state.maxUploadMb + " MB)";
+      } else {
+        item.blob = send;
+        item.previewUrl = URL.createObjectURL(send);
+        item.status = "staged";
       }
-      state.blob = send;
-      if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-      state.previewUrl = URL.createObjectURL(state.blob);
-      state.modelIdx = 0;
-      submit();
+      updateThumb(item);
+      refreshUI();
     });
   }
 
-  /* Ужимаем до 2048px по длинной стороне — CPU-серверу легче, для глаза то же.
-     PNG остаётся PNG (важно для рисунков), остальное → JPEG 0.9 на белом фоне.
-     Если браузер не смог раскодировать (HEIC на десктопе) — шлём оригинал. */
+  /* Shrink to 2048px long side before sending — lighter and faster.
+     PNG stays PNG; others → JPEG on white. Undecodable (HEIC on desktop) → original. */
   function shrink(file) {
     return new Promise(function (resolve) {
       var url = URL.createObjectURL(file);
       var img = new Image();
       img.onload = function () {
-        var w = img.naturalWidth, h = img.naturalHeight;
-        var long = Math.max(w, h);
+        var w = img.naturalWidth, h = img.naturalHeight, long = Math.max(w, h);
         var needResize = long > 2048;
         var isJpeg = /jpe?g$/i.test(file.type);
         if (!needResize && (isJpeg || /png|webp/i.test(file.type)) && file.size < 4 * 1048576) {
-          URL.revokeObjectURL(url);
-          resolve(null); // оригинал и так лёгкий
-          return;
+          URL.revokeObjectURL(url); resolve(null); return;
         }
         var isPng = /png$/i.test(file.type);
         var k = needResize ? 2048 / long : 1;
         var canvas = document.createElement("canvas");
-        canvas.width = Math.round(w * k);
-        canvas.height = Math.round(h * k);
+        canvas.width = Math.round(w * k); canvas.height = Math.round(h * k);
         var ctx = canvas.getContext("2d");
-        if (!isPng) { // прозрачность под JPEG кладём на белый, не на чёрный
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
+        if (!isPng) { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(function (blob) {
-          URL.revokeObjectURL(url);
-          resolve(blob);
-        }, isPng ? "image/png" : "image/jpeg", 0.9);
+        canvas.toBlob(function (b) { URL.revokeObjectURL(url); resolve(b); },
+          isPng ? "image/png" : "image/jpeg", 0.9);
       };
-      img.onerror = function () {
-        URL.revokeObjectURL(url);
-        resolve(null);
-      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(null); };
       img.src = url;
     });
   }
 
-  /* ---------- отправка и ожидание ---------- */
+  /* ---------- thumbnails ---------- */
 
-  function submit() {
-    var rawName = (fileInput.files[0] && fileInput.files[0].name) || "photo.jpg";
-    var name = state.blob.type === "image/jpeg"
-      ? rawName.replace(/\.\w+$/, ".jpg") : rawName;
-
-    setProcessingUI();
-
-    API.createJob(state.blob, name, state.scale, state.models[state.modelIdx])
-      .then(function (body) {
-        state.jobId = body.id;
-        state.pollFails = 0;
-        poll();
-      })
-      .catch(function (e) {
-        if (e && e.status === 400) {
-          // permanent error (not a photo / too big) — don't loop the retry
-          permanentFail(e.friendly ? e.message : "Couldn’t open the file — is it a photo?");
-        } else {
-          fail(e && e.friendly ? e.message
-            : "Couldn’t send the photo — check your connection and try again");
-        }
-      });
+  function renderThumb(item) {
+    var el = document.createElement("button");
+    el.className = "thumb"; el.type = "button";
+    el.innerHTML =
+      '<img alt="">' +
+      '<span class="thumb-bar"><span></span></span>' +
+      '<span class="thumb-badge"></span>' +
+      '<span class="thumb-x" aria-label="remove">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6L6 18"/></svg></span>';
+    el.querySelector(".thumb-x").addEventListener("click", function (e) {
+      e.stopPropagation(); removeItem(item);
+    });
+    el.addEventListener("click", function () { if (item.status === "done") openOverlay(item); });
+    item.thumbEl = el;
+    grid.appendChild(el);
+    updateThumb(item);
   }
 
-  function setProcessingUI() {
-    frame.dataset.state = "processing";
-    stage.hidden = false;
-    divider.hidden = true;
-    chips.forEach(function (c) { c.hidden = true; });
-    imgAfter.removeAttribute("src");
-    if (state.previewUrl) imgBefore.src = state.previewUrl;
-    hide(controls);
-    hide(actions);
-    downloadHint.hidden = true;
-    show(progressline);
-    show(statusEl);
-    statusEl.classList.remove("error");
-    setStatus("Enhancing… this takes a moment. Keep this window open");
-
-    state.visualP = 0;
-    state.targetP = 6;
-    startRaf();
-    startPhrases();
-    keepAwake();
+  function updateThumb(item) {
+    var el = item.thumbEl; if (!el) return;
+    el.dataset.status = item.status;
+    var img = el.querySelector("img");
+    if (item.previewUrl && img.getAttribute("src") !== item.previewUrl) img.src = item.previewUrl;
+    el.querySelector(".thumb-bar").firstChild.style.width =
+      (item.status === "processing" ? (item.progress || 0) : 0) + "%";
+    var badge = el.querySelector(".thumb-badge");
+    badge.textContent = item.status === "done" ? "✓"
+      : item.status === "error" ? "!"
+      : item.status === "queued" ? "…" : "";
+    el.querySelector(".thumb-x").hidden =
+      state.running || item.status === "processing" || item.status === "queued";
+    el.title = item.status === "error" ? (item.error || "Error") : "";
   }
 
-  function poll() {
-    state.pollTimer = setTimeout(function () {
-      API.getJob(state.jobId)
-        .then(function (b) {
-          state.pollFails = 0;
-          if (b.status === "done") {
-            state.targetP = 100;
-            finish();
-          } else if (b.status === "error") {
-            fail(b.error || "Something went wrong. The photo’s fine — just try again");
-          } else {
-            if (b.status === "queued" && b.position > 0) {
-              setStatus(b.position + " photo" + (b.position > 1 ? "s" : "") + " ahead of you — starting soon…");
-            }
-            state.targetP = 8 + (b.progress || 0) * 0.9;
-            poll();
-          }
-        })
-        .catch(function (e) {
-          if (e && e.status === 404) {
-            fail(e.message || "This job is no longer available — upload the photo again");
-          } else if (++state.pollFails < 25) {
-            poll(); // network blip — keep trying
-          } else {
-            fail("Connection dropped — check your internet and try again");
-          }
-        });
-    }, 1200);
+  function removeItem(item) {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    if (item.thumbEl) item.thumbEl.remove();
+    items = items.filter(function (i) { return i !== item; });
+    refreshUI();
   }
 
-  /* ---------- прогресс-проявка ---------- */
+  clearBtn.addEventListener("click", function () {
+    if (state.running) return;
+    items.forEach(function (i) { if (i.previewUrl) URL.revokeObjectURL(i.previewUrl); });
+    items = []; grid.innerHTML = ""; refreshUI();
+  });
 
-  function startRaf() {
-    cancelAnimationFrame(state.raf);
-    function step() {
-      state.visualP += (state.targetP - state.visualP) * 0.06;
-      bar.style.width = state.visualP.toFixed(1) + "%";
-      if (!reducedMotion && frame.dataset.state === "processing" && imgBefore.src) {
-        var left = 1 - state.visualP / 100;
-        imgBefore.style.filter =
-          "blur(" + (22 * left).toFixed(1) + "px)" +
-          " brightness(" + (1 + 0.35 * left).toFixed(3) + ")" +
-          " saturate(" + (1 - 0.4 * left).toFixed(3) + ")";
-      }
-      if (state.visualP < 99.8) state.raf = requestAnimationFrame(step);
+  /* ---------- ui state ---------- */
+
+  function refreshUI() {
+    var has = items.length > 0;
+    dropzone.hidden = has;
+    grid.hidden = !has;
+    controls.hidden = !has || state.running;
+    actions.hidden = !has;
+    updatePrimary();
+  }
+
+  function updatePrimary() {
+    var staged = items.filter(function (i) { return i.status === "staged"; }).length;
+    var busy = items.some(function (i) { return i.status === "processing" || i.status === "queued"; });
+    var done = items.filter(function (i) { return i.status === "done"; }).length;
+    primaryBtn.disabled = busy || (staged === 0 && done === 0);
+    if (busy) {
+      primaryBtn.textContent = "Enhancing… " + done + "/" + items.length;
+    } else if (staged > 0) {
+      primaryBtn.textContent = "Enhance " + items.length + (items.length > 1 ? " photos" : " photo");
+    } else if (done > 0) {
+      primaryBtn.textContent = done > 1 ? "Save all (" + done + ")" : "Save photo";
+    } else {
+      primaryBtn.textContent = "Enhance";
     }
-    state.raf = requestAnimationFrame(step);
+    addBtn.hidden = busy;
+    clearBtn.hidden = busy;
+    if (busy) { setStatus("Keep this window open while photos are processed"); show(statusEl); }
+    else if (done && done === items.length) { setStatus("Done! Tap a photo to compare before / after"); show(statusEl); }
+    else hide(statusEl);
   }
 
-  function startPhrases() {
-    var i = 0;
-    clearInterval(state.phraseTimer);
-    clearTimeout(state.patienceTimer);
-    state.phraseTimer = setInterval(function () {
-      setStatusSoft(PHRASES[i % PHRASES.length]);
-      i++;
-    }, 9000);
-    state.patienceTimer = setTimeout(function () {
-      clearInterval(state.phraseTimer); // чтобы ротация не затёрла фразу терпения
-      setStatusSoft(PATIENCE);
-    }, 62000);
+  primaryBtn.addEventListener("click", function () {
+    var staged = items.filter(function (i) { return i.status === "staged"; });
+    if (staged.length) startProcessing();
+    else saveAll();
+  });
+
+  /* ---------- processing queue (one at a time) ---------- */
+
+  function startProcessing() {
+    if (state.running) return;
+    state.running = true;
+    keepAwake();
+    items.forEach(function (i) {
+      if (i.status === "staged") { i.status = "queued"; updateThumb(i); }
+    });
+    refreshUI();
+    pump();
   }
 
-  function setStatus(text) { statusEl.textContent = text; }
+  function pump() {
+    var next = items.find(function (i) { return i.status === "queued"; });
+    if (!next) { state.running = false; releaseWake(); refreshUI(); return; }
+    processItem(next, next.modelIdx).then(pump);
+  }
 
-  function setStatusSoft(text) {
-    if (frame.dataset.state !== "processing") return;
-    statusEl.classList.add("swap");
+  function processItem(item, modelIdx) {
+    return new Promise(function (resolve) {
+      item.status = "processing"; item.progress = 0; item.fails = 0; updateThumb(item); updatePrimary();
+      var name = item.blob.type === "image/jpeg" ? item.name.replace(/\.\w+$/, ".jpg") : item.name;
+      API.createJob(item.blob, name, state.scale, state.models[modelIdx] || state.models[0])
+        .then(function (body) { item.jobId = body.id; pollItem(item, resolve); })
+        .catch(function (e) {
+          item.status = "error";
+          item.error = e && e.friendly ? e.message : "Couldn’t process this one";
+          updateThumb(item); updatePrimary(); resolve();
+        });
+    });
+  }
+
+  function pollItem(item, done) {
     setTimeout(function () {
-      statusEl.textContent = text;
-      statusEl.classList.remove("swap");
-    }, 450);
+      API.getJob(item.jobId).then(function (b) {
+        if (b.status === "done") {
+          item.status = "done"; item.progress = 100;
+          item.beforeUrl = API.originalURL(item.jobId);
+          item.resultUrl = API.resultURL(item.jobId);
+          updateThumb(item); updatePrimary();
+          if (current === item) showResultInOverlay(item);
+          done();
+        } else if (b.status === "error") {
+          item.status = "error"; item.error = b.error || "Failed"; updateThumb(item); updatePrimary(); done();
+        } else {
+          item.progress = b.progress || 0; updateThumb(item); pollItem(item, done);
+        }
+      }).catch(function (e) {
+        if (e && e.status === 404) { item.status = "error"; item.error = "Job lost"; updateThumb(item); updatePrimary(); done(); }
+        else if (++item.fails < 25) pollItem(item, done);
+        else { item.status = "error"; item.error = "Connection lost"; updateThumb(item); updatePrimary(); done(); }
+      });
+    }, 700);
   }
 
-  /* ---------- результат ---------- */
+  /* ---------- save ---------- */
 
-  function finish() {
-    var before = API.originalURL(state.jobId);
-    var after = API.resultURL(state.jobId);
-    state.resultUrl = after;
+  function saveAll() {
+    var done = items.filter(function (i) { return i.status === "done"; });
+    if (!done.length) return;
+    if (API.saveAll) { API.saveAll(done.map(function (i) { return i.jobId; })); return; }
+    done.forEach(function (it, idx) {
+      setTimeout(function () {
+        API.downloadResult(it.jobId).then(function (blob) {
+          if (!blob) return;
+          downloadBlob(blob, "upscaled-" + (idx + 1) + (blob.type === "image/png" ? ".png" : ".jpg"));
+        });
+      }, idx * 400);
+    });
+  }
 
-    var b = new Image(), a = new Image();
-    var loaded = 0;
+  function downloadBlob(blob, name) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 30000);
+  }
+
+  /* ---------- detail overlay: before / after ---------- */
+
+  function openOverlay(item) {
+    current = item;
+    overlay.hidden = false;
+    document.body.style.overflow = "hidden";
+    retryHint.hidden = state.models.length < 2;
+    retryBtn.hidden = state.models.length < 2;
+    showResultInOverlay(item);
+  }
+
+  function showResultInOverlay(item) {
+    saveBtn.disabled = false; saveBtn.textContent = SAVE_LABEL;
+    retryBtn.disabled = false; retryBtn.textContent = "Try another look";
+    var b = new Image(), a = new Image(), loaded = 0;
     function ready() {
       if (++loaded < 2) return;
-      stopWaiting();
-      imgBefore.style.filter = "";
-      imgBefore.src = before;
-      imgAfter.src = after;
-      frame.dataset.state = "done";
-      divider.hidden = false;
+      imgBefore.src = item.beforeUrl; imgAfter.src = item.resultUrl;
       chips.forEach(function (c) { c.hidden = false; });
-      showChips();
-
-      if (state.models[state.modelIdx] === "art") {
-        setStatus("Done! This is the illustration look — drag the line to compare");
-      } else {
-        setStatus("Done! Drag the line — see before and after");
-      }
-
-      show(actions);
-      hide(progressline);
-      scheduleChipFade();
-
-      if (reducedMotion) {
-        setSlider(50);
-      } else {
-        var band = imageBand();
-        var span = band[1] - band[0];
-        // «после» справа: едем от тонкой полоски справа к середине — результат раскрывается
-        sweep(band[0] + 0.85 * span, band[0] + 0.45 * span, 1200);
-      }
+      showChips(); scheduleChipFade();
+      if (reducedMotion) setSlider(50);
+      else { var band = imageBand(); var s = band[1] - band[0]; sweep(band[0] + 0.85 * s, band[0] + 0.45 * s, 1100); }
     }
     b.onload = ready; a.onload = ready;
-    b.onerror = a.onerror = function () {
-      fail("Couldn’t show the result — but it’s ready, try refreshing");
-    };
-    b.src = before; a.src = after;
+    b.onerror = a.onerror = ready;
+    b.src = item.beforeUrl; a.src = item.resultUrl;
   }
 
-  function stopWaiting() {
-    clearTimeout(state.pollTimer);
-    clearInterval(state.phraseTimer);
-    clearTimeout(state.patienceTimer);
-    cancelAnimationFrame(state.raf);
-    bar.style.width = "100%";
-    releaseWake();
-  }
+  overlayClose.addEventListener("click", closeOverlay);
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeOverlay(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !overlay.hidden) closeOverlay(); });
 
-  function fail(message) {
-    stopWaiting();
-    frame.dataset.state = state.previewUrl ? "processing" : "idle";
-    if (state.previewUrl) imgBefore.style.filter = "";
-    hide(progressline);
-    statusEl.classList.add("error");
-    setStatus(message);
-    show(statusEl);
-    retryBtn.textContent = "Try again";
-    retryHint.hidden = true;
-    show(actions);
-    downloadBtn.parentElement.style.display = "none";
-  }
+  function closeOverlay() { overlay.hidden = true; current = null; document.body.style.overflow = ""; }
 
-  // Постоянная ошибка: возвращаемся в исходный экран и показываем причину без ретрая.
-  function permanentFail(message) {
-    resetUI();
-    statusEl.classList.add("error");
-    setStatus(message);
-    show(statusEl);
-  }
+  saveBtn.addEventListener("click", function () {
+    if (!current) return;
+    saveBtn.textContent = "One sec…";
+    API.downloadResult(current.jobId).then(function (blob) {
+      if (!blob) return;
+      var ext = blob.type === "image/png" ? ".png" : ".jpg";
+      if (isTouch && navigator.canShare) {
+        var file = new File([blob], "upscaled" + ext, { type: blob.type });
+        if (navigator.canShare({ files: [file] })) {
+          return navigator.share({ files: [file] }).catch(function (er) {
+            if (er.name !== "AbortError") downloadBlob(blob, "upscaled" + ext);
+          });
+        }
+      }
+      downloadBlob(blob, "upscaled" + ext);
+    }).catch(function () {}).then(function () { saveBtn.textContent = SAVE_LABEL; });
+  });
 
-  function resetUI() {
-    stopWaiting();
-    frame.dataset.state = "idle";
-    stage.hidden = true;
-    hide(actions);
-    hide(progressline);
-    hide(statusEl);
-    show(controls);
-    statusEl.classList.remove("error");
-    imgBefore.removeAttribute("src");
-    imgBefore.style.filter = "";
-    imgAfter.removeAttribute("src");
-    fileInput.value = "";
-    if (state.previewUrl) { URL.revokeObjectURL(state.previewUrl); state.previewUrl = null; }
-    state.blob = null;
-    state.jobId = null;
-    state.resultUrl = null;
-    downloadBtn.parentElement.style.display = "";
-    downloadBtn.textContent = DOWNLOAD_LABEL;
-    retryBtn.textContent = "Try another look";
-  }
+  retryBtn.addEventListener("click", function () {
+    if (!current || state.running) return;
+    var item = current;
+    item.modelIdx = (item.modelIdx + 1) % state.models.length;
+    saveBtn.disabled = true; retryBtn.disabled = true; retryBtn.textContent = "Enhancing…";
+    chips.forEach(function (c) { c.hidden = true; });
+    state.running = true; refreshUI();
+    processItem(item, item.modelIdx).then(function () {
+      state.running = false; refreshUI();
+      if (item.status === "done" && current === item) showResultInOverlay(item);
+      else { retryBtn.disabled = false; retryBtn.textContent = "Try another look"; saveBtn.disabled = false; }
+    });
+  });
 
-  /* ---------- before/after slider ("before" left, "after" right) ---------- */
+  /* ---------- slider ("before" left, "after" right) ---------- */
 
-  // Полоса, реально занятая фото в раме (object-fit: contain): за её краями
-  // только нейтральный паддинг — туда ручку не пускаем.
   function imageBand() {
     var nw = imgBefore.naturalWidth, nh = imgBefore.naturalHeight;
     if (!nw || !nh) return [0, 100];
@@ -380,16 +348,15 @@
 
   function setSlider(p) {
     var band = imageBand();
-    state.sliderPos = Math.max(band[0], Math.min(band[1], p));
-    imgAfter.style.clipPath = "inset(0 0 0 " + state.sliderPos + "%)";
-    divider.style.left = state.sliderPos + "%";
+    sliderPos = Math.max(band[0], Math.min(band[1], p));
+    imgAfter.style.clipPath = "inset(0 0 0 " + sliderPos + "%)";
+    divider.style.left = sliderPos + "%";
   }
 
   function sweep(from, to, ms) {
     var t0 = performance.now();
     function tick(t) {
-      var k = Math.min(1, (t - t0) / ms);
-      var e = 1 - Math.pow(1 - k, 3); // ease-out
+      var k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
       setSlider(from + (to - from) * e);
       if (k < 1) requestAnimationFrame(tick);
     }
@@ -398,40 +365,24 @@
 
   var dragging = false;
   stage.addEventListener("pointerdown", function (e) {
-    if (frame.dataset.state !== "done") return;
-    dragging = true;
-    stage.setPointerCapture(e.pointerId);
-    moveSlider(e);
-    showChips();
+    if (overlay.hidden) return;
+    dragging = true; stage.setPointerCapture(e.pointerId); moveSlider(e); showChips();
   });
-  stage.addEventListener("pointermove", function (e) {
-    if (dragging) moveSlider(e);
-  });
+  stage.addEventListener("pointermove", function (e) { if (dragging) moveSlider(e); });
   ["pointerup", "pointercancel"].forEach(function (ev) {
-    stage.addEventListener(ev, function () {
-      dragging = false;
-      scheduleChipFade();
-    });
+    stage.addEventListener(ev, function () { dragging = false; scheduleChipFade(); });
   });
-
   function moveSlider(e) {
     var rect = stage.getBoundingClientRect();
     setSlider((e.clientX - rect.left) / rect.width * 100);
   }
-
-  function showChips() {
-    clearTimeout(state.chipTimer);
-    chips.forEach(function (c) { c.classList.remove("faded"); });
-  }
-
+  function showChips() { clearTimeout(chipTimer); chips.forEach(function (c) { c.classList.remove("faded"); }); }
   function scheduleChipFade() {
-    clearTimeout(state.chipTimer);
-    state.chipTimer = setTimeout(function () {
-      chips.forEach(function (c) { c.classList.add("faded"); });
-    }, 4000);
+    clearTimeout(chipTimer);
+    chipTimer = setTimeout(function () { chips.forEach(function (c) { c.classList.add("faded"); }); }, 4000);
   }
 
-  /* ---------- кнопки ---------- */
+  /* ---------- size control ---------- */
 
   document.querySelectorAll(".seg-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -441,82 +392,20 @@
     });
   });
 
-  downloadBtn.addEventListener("click", function () {
-    if (!state.jobId) return;
-    downloadBtn.textContent = "One sec…";
-    API.downloadResult(state.jobId)
-      .then(function (blob) {
-        if (!blob) return; // desktop already showed "Save as…"
-        var ext = blob.type === "image/png" ? ".png" : ".jpg";
-        if (isTouch && navigator.canShare) {
-          var file = new File([blob], "upscaled" + ext, { type: blob.type });
-          if (navigator.canShare({ files: [file] })) {
-            return navigator.share({ files: [file] }).catch(function (e) {
-              if (e.name !== "AbortError") plainDownload(blob);
-            });
-          }
-        }
-        plainDownload(blob);
-      })
-      .catch(function () { plainDownload(null); })
-      .then(function () {
-        downloadBtn.textContent = DOWNLOAD_LABEL;
-        if (isTouch && API.mode === "web") downloadHint.hidden = false;
-      });
-  });
-
-  function plainDownload(blob) {
-    var a = document.createElement("a");
-    if (blob) {
-      a.href = URL.createObjectURL(blob);
-      a.download = "upscaled" + (blob.type === "image/png" ? ".png" : ".jpg");
-    } else {
-      // the server sets the name via Content-Disposition
-      a.href = state.resultUrl + "?download=1";
-    }
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    if (blob) setTimeout(function () { URL.revokeObjectURL(a.href); }, 30000);
-  }
-
-  retryBtn.addEventListener("click", function () {
-    if (!state.blob) return;
-    if (retryBtn.textContent.indexOf("again") === -1) {
-      state.modelIdx = (state.modelIdx + 1) % state.models.length;
-    }
-    retryBtn.textContent = "Try another look";
-    retryHint.hidden = state.models.length < 2;
-    downloadBtn.parentElement.style.display = "";
-    submit();
-  });
-
-  resetBtn.addEventListener("click", resetUI);
-
-  /* ---------- не дать экрану погаснуть (где разрешено: HTTPS/localhost) ---------- */
+  /* ---------- keep screen awake while processing ---------- */
 
   function keepAwake() {
-    try {
-      navigator.wakeLock.request("screen").then(function (lock) {
-        state.wakeLock = lock;
-      }).catch(function () {});
-    } catch (e) { /* не поддерживается — фото всё равно доделается на сервере */ }
+    try { navigator.wakeLock.request("screen").then(function (l) { state.wakeLock = l; }).catch(function () {}); }
+    catch (e) {}
   }
-
   function releaseWake() {
-    if (state.wakeLock) {
-      state.wakeLock.release().catch(function () {});
-      state.wakeLock = null;
-    }
+    if (state.wakeLock) { state.wakeLock.release().catch(function () {}); state.wakeLock = null; }
   }
-
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" &&
-        frame.dataset.state === "processing") {
-      keepAwake();
-    }
+    if (document.visibilityState === "visible" && state.running) keepAwake();
   });
 
+  function setStatus(t) { statusEl.textContent = t; }
   function show(el) { el.hidden = false; }
   function hide(el) { el.hidden = true; }
 })();

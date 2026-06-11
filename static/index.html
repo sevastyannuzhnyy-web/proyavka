@@ -5,40 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0E0E10">
 <meta name="description" content="Make your photos sharper and cleaner">
-<title>Photo Enhancer</title>
+<title>Upscaler</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
-  <section class="frame" id="frame" data-state="idle">
-    <label class="dropzone" id="dropzone">
-      <svg class="dz-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-        <rect x="6" y="8" width="36" height="32" rx="3"/>
-        <circle cx="18" cy="19" r="3.5"/>
-        <path d="M6 34l10-9 8 7 9-10 9 9"/>
-      </svg>
-      <span class="dz-text">Drop a photo here<br>or click to choose</span>
-      <span class="dz-hint">JPG, PNG or HEIC</span>
-      <input type="file" id="file" accept="image/*">
-    </label>
+  <!-- empty state: drop zone (accepts many) -->
+  <label class="dropzone" id="dropzone">
+    <svg class="dz-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <rect x="6" y="8" width="36" height="32" rx="3"/>
+      <circle cx="18" cy="19" r="3.5"/>
+      <path d="M6 34l10-9 8 7 9-10 9 9"/>
+    </svg>
+    <span class="dz-text">Drop photos here<br>or click to choose</span>
+    <span class="dz-hint">one or many · JPG, PNG or HEIC</span>
+    <input type="file" id="file" accept="image/*" multiple>
+  </label>
 
-    <div class="stage" id="stage" hidden>
-      <img id="imgBefore" alt="before" draggable="false">
-      <img id="imgAfter" alt="after" draggable="false">
-      <div class="divider" id="divider" hidden>
-        <div class="handle" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l-5 6 5 6M15 6l5 6-5 6"/></svg>
-        </div>
-      </div>
-      <span class="chip chip-before" hidden>before</span>
-      <span class="chip chip-after" hidden>after</span>
-    </div>
-  </section>
+  <!-- staged / processing / done: thumbnail grid -->
+  <div class="grid" id="grid" hidden></div>
 
-  <div class="progressline" id="progressline" hidden><div class="bar" id="bar"></div></div>
   <p class="status" id="status" hidden></p>
 
-  <div class="controls" id="controls">
+  <div class="controls" id="controls" hidden>
     <div class="seg" role="group" aria-label="output size">
       <button class="seg-btn active" data-scale="2" type="button">
         <span class="seg-word">For screen</span><span class="seg-mult">2×</span>
@@ -50,15 +39,41 @@
   </div>
 
   <div class="actions" id="actions" hidden>
-    <div class="download-wrap">
-      <button class="btn-primary" id="downloadBtn" type="button">Download full size</button>
+    <div class="primary-wrap">
+      <button class="btn-primary" id="primaryBtn" type="button">Enhance</button>
     </div>
-    <p class="download-hint" id="downloadHint" hidden>Didn’t save? Press and hold the “after” side and choose “Save image”</p>
-    <button class="btn-ghost" id="retryBtn" type="button">Try another look</button>
-    <p class="retry-hint" id="retryHint">same photo, different style</p>
-    <button class="btn-link" id="resetBtn" type="button">choose another photo</button>
+    <button class="btn-ghost" id="addBtn" type="button">Add more photos</button>
+    <button class="btn-link" id="clearBtn" type="button">clear all</button>
   </div>
 </main>
+
+<!-- detail overlay: before/after for one photo -->
+<div class="overlay" id="overlay" hidden>
+  <div class="overlay-inner">
+    <button class="overlay-close" id="overlayClose" type="button" aria-label="close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <div class="frame" id="frame">
+      <div class="stage" id="stage">
+        <img id="imgBefore" alt="before" draggable="false">
+        <img id="imgAfter" alt="after" draggable="false">
+        <div class="divider" id="divider">
+          <div class="handle" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l-5 6 5 6M15 6l5 6-5 6"/></svg>
+          </div>
+        </div>
+        <span class="chip chip-before">before</span>
+        <span class="chip chip-after">after</span>
+      </div>
+    </div>
+    <div class="overlay-actions">
+      <button class="btn-primary" id="saveBtn" type="button">Download full size</button>
+      <button class="btn-ghost" id="retryBtn" type="button">Try another look</button>
+      <p class="retry-hint" id="retryHint">same photo, different style</p>
+    </div>
+  </div>
+</div>
+
 <script src="api.js"></script>
 <script src="app.js"></script>
 </body>
