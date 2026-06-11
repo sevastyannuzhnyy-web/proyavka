@@ -25,7 +25,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "_targets_note": "без msi: WiX light.exe падает на кириллице в productName; nsis (Unicode) — ок и дружелюбнее",
+    "targets": ["app", "dmg", "nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
