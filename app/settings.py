@@ -13,8 +13,6 @@ NCNN_MODELS_DIR = os.environ.get("NCNN_MODELS_DIR", str(BASE_DIR / "bin" / "mode
 
 PORT = int(os.environ.get("PORT", "8000"))
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "30"))
-# Бюджет на размер результата: вход даунскейлится так, чтобы выход не превысил.
-MAX_OUTPUT_MP = float(os.environ.get("MAX_OUTPUT_MP", "64"))
 QUEUE_MAX = int(os.environ.get("QUEUE_MAX", "6"))
 JOB_TTL_HOURS = float(os.environ.get("JOB_TTL_HOURS", "24"))
 TORCH_THREADS = int(os.environ.get("TORCH_THREADS", "0"))  # 0 = все ядра

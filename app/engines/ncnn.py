@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 from PIL import Image
@@ -45,23 +46,37 @@ class NcnnEngine(Engine):
         ]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
-        for line in proc.stderr:
-            m = PERCENT_RE.search(line)
-            if m:
-                progress(min(95, int(m.group(1))))
-        proc.wait()
-        if proc.returncode != 0 or not tmp.exists():
-            raise EngineError("Обработка не получилась — попробуй ещё раз")
 
-        result = Image.open(tmp)
-        if scale != 4:
-            result = result.resize(
-                (result.width * scale // 4, result.height * scale // 4),
-                Image.LANCZOS)
-        if dst.suffix.lower() in (".jpg", ".jpeg"):
-            result = result.convert("RGB")
-            result.save(dst, quality=95)
-        else:
-            result.save(dst)
-        tmp.unlink(missing_ok=True)
+        # читаем прогресс в отдельном потоке, а в основном ждём с таймаутом —
+        # иначе зависший GPU-процесс заблокировал бы единственный worker навсегда
+        def pump():
+            for line in proc.stderr:
+                m = PERCENT_RE.search(line)
+                if m:
+                    progress(min(95, int(m.group(1))))
+
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
+        try:
+            try:
+                proc.wait(timeout=600)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise EngineError("Обработка не получилась — попробуй ещё раз")
+            if proc.returncode != 0 or not tmp.exists():
+                raise EngineError("Обработка не получилась — попробуй ещё раз")
+
+            result = Image.open(tmp)
+            if scale != 4:
+                result = result.resize(
+                    (result.width * scale // 4, result.height * scale // 4),
+                    Image.LANCZOS)
+            if dst.suffix.lower() in (".jpg", ".jpeg"):
+                result = result.convert("RGB")
+                result.save(dst, quality=95)
+            else:
+                result.save(dst)
+        finally:
+            tmp.unlink(missing_ok=True)
         progress(100)

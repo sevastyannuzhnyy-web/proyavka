@@ -4,7 +4,7 @@
 
   var $ = function (id) { return document.getElementById(id); };
 
-  var frame = $("frame"), stage = $("stage"), dropzone = $("dropzone");
+  var frame = $("frame"), stage = $("stage");
   var fileInput = $("file");
   var imgBefore = $("imgBefore"), imgAfter = $("imgAfter");
   var divider = $("divider");
@@ -17,6 +17,8 @@
   var retryBtn = $("retryBtn"), retryHint = $("retryHint"), resetBtn = $("resetBtn");
 
   var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  var DOWNLOAD_LABEL = isTouch ? "Сохранить фото" : "Скачать в полном размере";
 
   var PHRASES = [
     "Вглядываюсь в детали…",
@@ -31,13 +33,14 @@
     scale: 2,
     models: ["soft"],
     modelIdx: 0,
+    maxUploadMb: 30,
     blob: null,          // что отправляем (ужатое или оригинал)
     previewUrl: null,
     jobId: null,
     pollTimer: null,
+    pollFails: 0,
     phraseTimer: null,
     patienceTimer: null,
-    startedAt: 0,
     visualP: 0,          // плавный прогресс 0..100
     targetP: 0,
     raf: 0,
@@ -47,8 +50,12 @@
     resultUrl: null
   };
 
-  fetch("/api/meta").then(function (r) { return r.json(); }).then(function (m) {
+  var API = window.Proyavka;
+  downloadBtn.textContent = DOWNLOAD_LABEL;
+
+  API.meta().then(function (m) {
     if (m.models && m.models.length) state.models = m.models;
+    if (m.maxUploadMb) state.maxUploadMb = m.maxUploadMb;
     if (state.models.length < 2) {
       retryBtn.hidden = true;
       retryHint.hidden = true;
@@ -83,7 +90,12 @@
     setStatus("Готовлю фото…");
     show(statusEl);
     shrink(file).then(function (blob) {
-      state.blob = blob || file;
+      var send = blob || file;
+      if (send.size > state.maxUploadMb * 1048576) {
+        permanentFail("Файл больше " + state.maxUploadMb + " МБ — попробуй фото поменьше");
+        return;
+      }
+      state.blob = send;
       if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
       state.previewUrl = URL.createObjectURL(state.blob);
       state.modelIdx = 0;
@@ -91,9 +103,9 @@
     });
   }
 
-  /* Ужимаем до 2048px по длинной стороне (JPEG 0.9) — CPU-серверу легче,
-     а итог для глаза тот же. Если браузер не смог раскодировать (HEIC на
-     десктопе) — отправляем оригинал, сервер разберётся. */
+  /* Ужимаем до 2048px по длинной стороне — CPU-серверу легче, для глаза то же.
+     PNG остаётся PNG (важно для рисунков), остальное → JPEG 0.9 на белом фоне.
+     Если браузер не смог раскодировать (HEIC на десктопе) — шлём оригинал. */
   function shrink(file) {
     return new Promise(function (resolve) {
       var url = URL.createObjectURL(file);
@@ -108,15 +120,21 @@
           resolve(null); // оригинал и так лёгкий
           return;
         }
+        var isPng = /png$/i.test(file.type);
         var k = needResize ? 2048 / long : 1;
         var canvas = document.createElement("canvas");
         canvas.width = Math.round(w * k);
         canvas.height = Math.round(h * k);
-        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        var ctx = canvas.getContext("2d");
+        if (!isPng) { // прозрачность под JPEG кладём на белый, не на чёрный
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         canvas.toBlob(function (blob) {
           URL.revokeObjectURL(url);
           resolve(blob);
-        }, "image/jpeg", 0.9);
+        }, isPng ? "image/png" : "image/jpeg", 0.9);
       };
       img.onerror = function () {
         URL.revokeObjectURL(url);
@@ -129,26 +147,27 @@
   /* ---------- отправка и ожидание ---------- */
 
   function submit() {
-    var fd = new FormData();
-    var name = (fileInput.files[0] && fileInput.files[0].name) || "photo.jpg";
-    fd.append("photo", state.blob, state.blob.type === "image/jpeg" ? name.replace(/\.\w+$/, ".jpg") : name);
-    fd.append("scale", state.scale);
-    fd.append("model", state.models[state.modelIdx]);
+    var rawName = (fileInput.files[0] && fileInput.files[0].name) || "photo.jpg";
+    var name = state.blob.type === "image/jpeg"
+      ? rawName.replace(/\.\w+$/, ".jpg") : rawName;
 
     setProcessingUI();
 
-    fetch("/api/jobs", { method: "POST", body: fd })
-      .then(function (r) {
-        return r.json().then(function (body) {
-          if (!r.ok) throw new Error(body.detail || "Не получилось отправить фото");
-          return body;
-        });
-      })
+    API.createJob(state.blob, name, state.scale, state.models[state.modelIdx])
       .then(function (body) {
         state.jobId = body.id;
+        state.pollFails = 0;
         poll();
       })
-      .catch(function (e) { fail(e.message); });
+      .catch(function (e) {
+        if (e && e.status === 400) {
+          // постоянная ошибка (не фото / слишком большой) — не зацикливаем ретрай
+          permanentFail(e.friendly ? e.message : "Не получилось открыть файл — это точно фотография?");
+        } else {
+          fail(e && e.friendly ? e.message
+            : "Не получилось отправить фото — проверь интернет и попробуй ещё раз");
+        }
+      });
   }
 
   function setProcessingUI() {
@@ -157,18 +176,15 @@
     divider.hidden = true;
     chips.forEach(function (c) { c.hidden = true; });
     imgAfter.removeAttribute("src");
-    if (state.previewUrl) {
-      imgBefore.src = state.previewUrl;
-    }
+    if (state.previewUrl) imgBefore.src = state.previewUrl;
     hide(controls);
     hide(actions);
     downloadHint.hidden = true;
     show(progressline);
     show(statusEl);
     statusEl.classList.remove("error");
-    setStatus("Проявляю… магия занимает минутку-другую, не закрывай страницу");
+    setStatus("Проявляю… магия занимает минутку-другую. Телефон можно заблокировать, страницу не закрывай");
 
-    state.startedAt = Date.now();
     state.visualP = 0;
     state.targetP = 6;
     startRaf();
@@ -178,14 +194,9 @@
 
   function poll() {
     state.pollTimer = setTimeout(function () {
-      fetch("/api/jobs/" + state.jobId)
-        .then(function (r) {
-          return r.json().then(function (b) {
-            if (!r.ok) throw new Error(b.detail || "Связь прервалась — попробуй ещё раз");
-            return b;
-          });
-        })
+      API.getJob(state.jobId)
         .then(function (b) {
+          state.pollFails = 0;
           if (b.status === "done") {
             state.targetP = 100;
             finish();
@@ -193,13 +204,21 @@
             fail(b.error || "Ой, что-то заело. Фото целое — просто попробуй ещё раз");
           } else {
             if (b.status === "queued" && b.position > 0) {
-              setStatus("Перед твоим фото в очереди ещё " + b.position + " — скоро начну…");
+              setStatus("Перед тобой в очереди ещё " + b.position + " фото — скоро начну…");
             }
             state.targetP = 8 + (b.progress || 0) * 0.9;
             poll();
           }
         })
-        .catch(function () { poll(); /* сеть мигнула — пробуем дальше */ });
+        .catch(function (e) {
+          if (e && e.status === 404) {
+            fail(e.message || "Эта проявка уже убрана с полки — загрузи фото заново");
+          } else if (++state.pollFails < 25) {
+            poll(); // сеть мигнула — пробуем дальше
+          } else {
+            fail("Связь прервалась — проверь интернет и попробуй ещё раз");
+          }
+        });
     }, 1200);
   }
 
@@ -231,6 +250,7 @@
       i++;
     }, 9000);
     state.patienceTimer = setTimeout(function () {
+      clearInterval(state.phraseTimer); // чтобы ротация не затёрла фразу терпения
       setStatusSoft(PATIENCE);
     }, 62000);
   }
@@ -249,8 +269,8 @@
   /* ---------- результат ---------- */
 
   function finish() {
-    var before = "/api/jobs/" + state.jobId + "/original";
-    var after = "/api/jobs/" + state.jobId + "/result";
+    var before = API.originalURL(state.jobId);
+    var after = API.resultURL(state.jobId);
     state.resultUrl = after;
 
     var b = new Image(), a = new Image();
@@ -264,18 +284,31 @@
       frame.dataset.state = "done";
       divider.hidden = false;
       chips.forEach(function (c) { c.hidden = false; });
-      scheduleChipFade();
-      setStatus("Готово! Потяни линию — посмотри, как было и как стало");
+      showChips();
+
+      if (state.models[state.modelIdx] === "art") {
+        setStatus("Готово! Это вариант-рисунок — стилизует фото под иллюстрацию. Потяни линию: как было и как стало");
+      } else {
+        setStatus("Готово! Потяни линию — посмотри, как было и как стало");
+      }
+
       show(actions);
       hide(progressline);
+      scheduleChipFade();
+
       if (reducedMotion) {
         setSlider(50);
       } else {
-        sweep(15, 55, 1200);
+        var band = imageBand();
+        var span = band[1] - band[0];
+        // «после» справа: едем от тонкой полоски справа к середине — результат раскрывается
+        sweep(band[0] + 0.85 * span, band[0] + 0.45 * span, 1200);
       }
     }
     b.onload = ready; a.onload = ready;
-    b.onerror = a.onerror = function () { fail("Не получилось показать результат — но он готов, попробуй обновить страницу"); };
+    b.onerror = a.onerror = function () {
+      fail("Не получилось показать результат — но он готов, попробуй обновить страницу");
+    };
     b.src = before; a.src = after;
   }
 
@@ -302,11 +335,52 @@
     downloadBtn.parentElement.style.display = "none";
   }
 
-  /* ---------- слайдер до/после ---------- */
+  // Постоянная ошибка: возвращаемся в исходный экран и показываем причину без ретрая.
+  function permanentFail(message) {
+    resetUI();
+    statusEl.classList.add("error");
+    setStatus(message);
+    show(statusEl);
+  }
+
+  function resetUI() {
+    stopWaiting();
+    frame.dataset.state = "idle";
+    stage.hidden = true;
+    hide(actions);
+    hide(progressline);
+    hide(statusEl);
+    show(controls);
+    statusEl.classList.remove("error");
+    imgBefore.removeAttribute("src");
+    imgBefore.style.filter = "";
+    imgAfter.removeAttribute("src");
+    fileInput.value = "";
+    if (state.previewUrl) { URL.revokeObjectURL(state.previewUrl); state.previewUrl = null; }
+    state.blob = null;
+    state.jobId = null;
+    state.resultUrl = null;
+    downloadBtn.parentElement.style.display = "";
+    downloadBtn.textContent = DOWNLOAD_LABEL;
+    retryBtn.textContent = "Попробовать по-другому";
+  }
+
+  /* ---------- слайдер до/после («до» слева, «после» справа) ---------- */
+
+  // Полоса, реально занятая фото в раме (object-fit: contain): за её краями
+  // только нейтральный паддинг — туда ручку не пускаем.
+  function imageBand() {
+    var nw = imgBefore.naturalWidth, nh = imgBefore.naturalHeight;
+    if (!nw || !nh) return [0, 100];
+    var frac = Math.min(1, (nw / nh) / (stage.clientWidth / stage.clientHeight));
+    var leftPct = (1 - frac) / 2 * 100;
+    return [leftPct, 100 - leftPct];
+  }
 
   function setSlider(p) {
-    state.sliderPos = Math.max(0, Math.min(100, p));
-    imgAfter.style.clipPath = "inset(0 " + (100 - state.sliderPos) + "% 0 0)";
+    var band = imageBand();
+    state.sliderPos = Math.max(band[0], Math.min(band[1], p));
+    imgAfter.style.clipPath = "inset(0 0 0 " + state.sliderPos + "%)";
     divider.style.left = state.sliderPos + "%";
   }
 
@@ -367,30 +441,38 @@
   });
 
   downloadBtn.addEventListener("click", function () {
-    if (!state.resultUrl) return;
+    if (!state.jobId) return;
     downloadBtn.textContent = "Секунду…";
-    fetch(state.resultUrl + "?download=1")
-      .then(function (r) { return r.blob(); })
+    API.downloadResult(state.jobId)
       .then(function (blob) {
-        var file = new File([blob], "проявка.jpg", { type: blob.type });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          return navigator.share({ files: [file] }).catch(function (e) {
-            if (e.name !== "AbortError") plainDownload(blob);
-          });
+        if (!blob) return; // десктоп сам показал «Сохранить как…»
+        var ext = blob.type === "image/png" ? ".png" : ".jpg";
+        if (isTouch && navigator.canShare) {
+          var file = new File([blob], "проявка" + ext, { type: blob.type });
+          if (navigator.canShare({ files: [file] })) {
+            return navigator.share({ files: [file] }).catch(function (e) {
+              if (e.name !== "AbortError") plainDownload(blob);
+            });
+          }
         }
         plainDownload(blob);
       })
       .catch(function () { plainDownload(null); })
       .then(function () {
-        downloadBtn.textContent = "Скачать в полном размере";
-        if ("ontouchstart" in window) downloadHint.hidden = false;
+        downloadBtn.textContent = DOWNLOAD_LABEL;
+        if (isTouch && API.mode === "web") downloadHint.hidden = false;
       });
   });
 
   function plainDownload(blob) {
     var a = document.createElement("a");
-    a.href = blob ? URL.createObjectURL(blob) : state.resultUrl + "?download=1";
-    a.download = "проявка.jpg";
+    if (blob) {
+      a.href = URL.createObjectURL(blob);
+      a.download = "проявка" + (blob.type === "image/png" ? ".png" : ".jpg");
+    } else {
+      // имя задаст сервер через Content-Disposition
+      a.href = state.resultUrl + "?download=1";
+    }
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -408,35 +490,16 @@
     submit();
   });
 
-  resetBtn.addEventListener("click", function () {
-    stopWaiting();
-    frame.dataset.state = "idle";
-    stage.hidden = true;
-    hide(actions);
-    hide(progressline);
-    hide(statusEl);
-    show(controls);
-    statusEl.classList.remove("error");
-    imgBefore.removeAttribute("src");
-    imgBefore.style.filter = "";
-    imgAfter.removeAttribute("src");
-    fileInput.value = "";
-    if (state.previewUrl) { URL.revokeObjectURL(state.previewUrl); state.previewUrl = null; }
-    state.blob = null;
-    state.jobId = null;
-    state.resultUrl = null;
-    downloadBtn.parentElement.style.display = "";
-    retryBtn.textContent = "Попробовать по-другому";
-  });
+  resetBtn.addEventListener("click", resetUI);
 
-  /* ---------- не дать экрану погаснуть ---------- */
+  /* ---------- не дать экрану погаснуть (где разрешено: HTTPS/localhost) ---------- */
 
   function keepAwake() {
     try {
       navigator.wakeLock.request("screen").then(function (lock) {
         state.wakeLock = lock;
       }).catch(function () {});
-    } catch (e) { /* не поддерживается — не страшно */ }
+    } catch (e) { /* не поддерживается — фото всё равно доделается на сервере */ }
   }
 
   function releaseWake() {

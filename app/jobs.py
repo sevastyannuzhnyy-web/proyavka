@@ -79,7 +79,13 @@ class JobManager:
             raise ValueError("Не получилось открыть файл — это точно фотография?")
 
         out_ext = ".png" if img.format == "PNG" else ".jpg"
-        img = ImageOps.exif_transpose(img).convert("RGB")
+        img = ImageOps.exif_transpose(img)
+        # прозрачность кладём на белый, а не на чёрный (логотипы/стикеры)
+        if img.mode != "RGB":
+            rgba = img.convert("RGBA")
+            bg = Image.new("RGB", rgba.size, (255, 255, 255))
+            bg.paste(rgba, mask=rgba.getchannel("A"))
+            img = bg
 
         mp = img.width * img.height / 1e6
         if mp > MAX_INPUT_MP:
@@ -90,7 +96,9 @@ class JobManager:
         jid = uuid.uuid4().hex[:12]
         d = self.job_dir(jid)
         d.mkdir(parents=True)
-        img.save(d / "input.png")
+        img.save(d / "input.png")  # вход для движка
+        # лёгкая копия для слайдера «до» (input.png бывает в 8× тяжелее JPEG)
+        img.save(d / "orig.jpg", quality=90)
 
         job = Job(id=jid, scale=scale, model=model,
                   src_name=(Path(filename).stem or "photo")[:60], out_ext=out_ext)
@@ -156,4 +164,18 @@ class JobManager:
                     self.jobs.pop(jid, None)
             for jid in old:
                 shutil.rmtree(self.job_dir(jid), ignore_errors=True)
+
+            # Второй проход: каталоги, осиротевшие после рестарта (dict пуст,
+            # а data/jobs/<id>/ остались). Свежий mtime защищает от гонки с submit().
+            with self.lock:
+                live = set(self.jobs)
+            try:
+                for d in (settings.DATA_DIR / "jobs").iterdir():
+                    try:
+                        if d.name not in live and d.stat().st_mtime < cutoff:
+                            shutil.rmtree(d, ignore_errors=True)
+                    except OSError:
+                        continue
+            except OSError:
+                pass
             time.sleep(600)

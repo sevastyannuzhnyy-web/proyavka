@@ -1,3 +1,21 @@
+/* самохостинг Spectral 300 (SIL OFL) — работает оффлайн и в десктоп-приложении */
+@font-face {
+  font-family: "Spectral";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(fonts/spectral-300-cyrillic.woff2) format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Spectral";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(fonts/spectral-300-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+2122, U+2191, U+2193;
+}
+
 :root {
   --bg: #FAF9F6;
   --surface: #FFFFFF;
@@ -109,7 +127,8 @@ main {
   user-select: none;
 }
 
-#imgAfter { clip-path: inset(0 50% 0 0); }
+/* «после» справа от линии, «до» слева */
+#imgAfter { clip-path: inset(0 0 0 50%); }
 .frame[data-state="processing"] #imgAfter { display: none; }
 .frame[data-state="processing"] .divider { display: none; }
 
@@ -204,7 +223,7 @@ main {
   justify-content: center;
   gap: 12px;
   margin-top: 16px;
-  height: 36px;
+  min-height: 36px;
 }
 
 .controls-label { font-size: 13px; color: var(--text-3); }
@@ -224,7 +243,7 @@ main {
   background: transparent;
   color: var(--text-2);
   border-radius: 99px;
-  padding: 4px 14px;
+  padding: 8px 16px;
   cursor: pointer;
 }
 
@@ -235,11 +254,14 @@ main {
 
 /* ---- результат ---- */
 
-.actions { margin-top: 16px; }
+/* display:contents — чтобы containing block для sticky-кнопки был main,
+   а не .actions (иначе bottom-sticky не срабатывает: ходу вверх нет) */
+.actions { display: contents; }
 
 .download-wrap {
   position: sticky;
   bottom: calc(12px + env(safe-area-inset-bottom));
+  margin-top: 16px;
   z-index: 2;
 }
 

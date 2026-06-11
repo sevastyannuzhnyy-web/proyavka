@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -37,9 +38,15 @@ async def create_job(photo: UploadFile = File(...),
         raise HTTPException(400, "Увеличение бывает 2× или 4×")
     if model not in manager.engine.available_models():
         raise HTTPException(400, "Такой обработки нет")
+    # отсекаем гигантский body до чтения в RAM (Starlette спулит на диск, .size есть)
+    if photo.size and photo.size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(400, f"Файл больше {settings.MAX_UPLOAD_MB} МБ — пришли фото поменьше")
     data = await photo.read()
     try:
-        job = manager.submit(data, photo.filename or "photo", scale, model)
+        # декод/ресайз — синхронный и тяжёлый: уводим из event loop,
+        # иначе поллинг и аплоад второго пользователя замирают
+        job = await run_in_threadpool(
+            manager.submit, data, photo.filename or "photo", scale, model)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
@@ -67,10 +74,14 @@ def job_original(jid: str):
     job = manager.get(jid)
     if job is None:
         raise HTTPException(404)
-    path = manager.job_dir(jid) / "input.png"
-    if not path.exists():
+    # лёгкая JPEG-копия для слайдера «до»; input.png — фолбэк для старых джоб
+    jpg = manager.job_dir(jid) / "orig.jpg"
+    if jpg.exists():
+        return FileResponse(jpg, media_type="image/jpeg")
+    png = manager.job_dir(jid) / "input.png"
+    if not png.exists():
         raise HTTPException(404)
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(png, media_type="image/png")
 
 
 @app.get("/api/jobs/{jid}/result")

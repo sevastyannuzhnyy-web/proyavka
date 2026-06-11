@@ -4,10 +4,11 @@ set -e
 HOST=blueprint-ai
 DEST=/opt/proyavka
 
+cd "$(dirname "$0")/.."
 rsync -az --delete \
   --exclude .venv --exclude data --exclude node_modules --exclude .git \
   --exclude 'models/*.pth' --exclude desktop --exclude shots \
-  "$(dirname "$0")/.." "$HOST:$DEST/"
+  ./ "$HOST:$DEST/"
 
 ssh "$HOST" "set -e
 cd $DEST

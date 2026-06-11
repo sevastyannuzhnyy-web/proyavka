@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Права для окна Проявки",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/realesrgan-ncnn-vulkan",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    "dialog:allow-save"
+  ]
+}
