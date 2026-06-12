@@ -55,6 +55,17 @@ def run(playwright, viewport, tag):
         timeout=10000)
     shoot(page, f"{tag}-2-staged.png")
 
+    # new mode control: Max must lock the size to 4×, then run as Restore (pre-clean path)
+    page.wait_for_selector('.mode-btn[data-model="max"]:not([hidden])', timeout=5000)
+    page.click('.mode-btn[data-model="max"]')
+    page.wait_for_function(
+        "() => document.getElementById('sizeSeg').classList.contains('locked')",
+        timeout=3000)
+    page.click('.mode-btn[data-model="restore"]')
+    page.wait_for_function(
+        "() => !document.getElementById('sizeSeg').classList.contains('locked')",
+        timeout=3000)
+
     # start
     page.click("#primaryBtn")
 

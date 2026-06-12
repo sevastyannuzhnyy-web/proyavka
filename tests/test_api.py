@@ -34,7 +34,7 @@ def wait_done(client, jid, timeout=10):
 def test_happy_path(client):
     r = client.post("/api/jobs",
                     files={"photo": ("cat.jpg", make_photo(), "image/jpeg")},
-                    data={"scale": 2, "model": "soft"})
+                    data={"scale": 2, "model": "photo"})
     assert r.status_code == 200, r.text
     jid = r.json()["id"]
 
@@ -58,7 +58,7 @@ def test_happy_path(client):
 def test_png_stays_png(client):
     r = client.post("/api/jobs",
                     files={"photo": ("pic.png", make_photo(fmt="PNG"), "image/png")},
-                    data={"scale": 2, "model": "soft"})
+                    data={"scale": 2, "model": "photo"})
     jid = r.json()["id"]
     body = wait_done(client, jid)
     assert body["status"] == "done"
@@ -69,7 +69,7 @@ def test_png_stays_png(client):
 def test_scale_4(client):
     r = client.post("/api/jobs",
                     files={"photo": ("cat.jpg", make_photo(50, 40), "image/jpeg")},
-                    data={"scale": 4, "model": "soft"})
+                    data={"scale": 4, "model": "photo"})
     body = wait_done(client, r.json()["id"])
     assert body["width"] == 200 and body["height"] == 160
 
@@ -77,7 +77,7 @@ def test_scale_4(client):
 def test_rejects_garbage(client):
     r = client.post("/api/jobs",
                     files={"photo": ("x.jpg", io.BytesIO(b"not a photo"), "image/jpeg")},
-                    data={"scale": 2, "model": "soft"})
+                    data={"scale": 2, "model": "photo"})
     assert r.status_code == 400
     assert "photo" in r.json()["detail"]
 
@@ -85,8 +85,27 @@ def test_rejects_garbage(client):
 def test_rejects_bad_scale(client):
     r = client.post("/api/jobs",
                     files={"photo": ("cat.jpg", make_photo(), "image/jpeg")},
-                    data={"scale": 3, "model": "soft"})
+                    data={"scale": 3, "model": "photo"})
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize("model", ["photo", "art", "max"])
+def test_all_modes_accepted(client, model):
+    r = client.post("/api/jobs",
+                    files={"photo": ("cat.jpg", make_photo(60, 50), "image/jpeg")},
+                    data={"scale": 2, "model": model})
+    assert r.status_code == 200, r.text
+    assert wait_done(client, r.json()["id"])["status"] == "done"
+
+
+def test_max_forces_4x(client):
+    # Max игнорирует выбранный размер и всегда даёт 4× (инвариант на сервере)
+    r = client.post("/api/jobs",
+                    files={"photo": ("cat.jpg", make_photo(50, 40), "image/jpeg")},
+                    data={"scale": 2, "model": "max"})
+    assert r.status_code == 200, r.text
+    body = wait_done(client, r.json()["id"])
+    assert body["width"] == 200 and body["height"] == 160  # 50*4 × 40*4, не 2×
 
 
 def test_rejects_unknown_model(client):
@@ -104,7 +123,7 @@ def test_huge_input_downscaled(client):
     # 3000x2400 = 7.2 Мп > потолка 4.6 Мп: вход ужимается, scale применяется к ужатому
     r = client.post("/api/jobs",
                     files={"photo": ("big.jpg", make_photo(3000, 2400), "image/jpeg")},
-                    data={"scale": 2, "model": "soft"})
+                    data={"scale": 2, "model": "photo"})
     assert r.status_code == 200
     body = wait_done(client, r.json()["id"], timeout=20)
     assert body["status"] == "done"
@@ -114,7 +133,9 @@ def test_huge_input_downscaled(client):
 def test_meta(client):
     body = client.get("/api/meta").json()
     assert body["engine"] == "fake"
-    assert "soft" in body["models"]
+    assert "photo" in body["models"]
+    assert "art" in body["models"]
+    assert "max" in body["models"]
 
 
 def test_exif_orientation_applied(client):
@@ -127,6 +148,6 @@ def test_exif_orientation_applied(client):
     buf.seek(0)
     r = client.post("/api/jobs",
                     files={"photo": ("rot.jpg", buf, "image/jpeg")},
-                    data={"scale": 2, "model": "soft"})
+                    data={"scale": 2, "model": "photo"})
     body = wait_done(client, r.json()["id"])
     assert (body["width"], body["height"]) == (180, 240)

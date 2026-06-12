@@ -15,3 +15,6 @@ desktop/src-tauri/resources/models/
 desktop/src-tauri/gen/
 shots/
 shots-prod/
+shots-prod-multi/
+desktop/src-tauri/_smoke/
+desktop/src-tauri/_fetch_tmp/

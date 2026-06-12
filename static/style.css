@@ -106,10 +106,16 @@ main {
 
 .status { font-size: 14px; color: var(--text-2); text-align: center; min-height: 20px; }
 
-/* ---- size control ---- */
+/* ---- mode + size controls ---- */
 
-.controls { display: flex; align-items: center; justify-content: center; }
+.controls { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .seg { display: flex; gap: 4px; border: 1px solid var(--hairline); border-radius: 99px; padding: 3px; }
+.seg-mode { flex-wrap: wrap; justify-content: center; }
+.mode-btn {
+  font: inherit; font-size: 14px; border: 0; background: transparent; color: var(--text-2);
+  border-radius: 99px; padding: 7px 16px; cursor: pointer;
+}
+.mode-btn.active { background: var(--text); color: var(--bg); }
 .seg-btn {
   font: inherit; border: 0; background: transparent; color: var(--text-2);
   border-radius: 99px; padding: 7px 16px; cursor: pointer;
@@ -119,6 +125,10 @@ main {
 .seg-mult { font-size: 12px; opacity: 0.6; }
 .seg-btn.active { background: var(--text); color: var(--bg); }
 .seg-btn.active .seg-mult { opacity: 0.7; }
+/* Max фиксирует 4× — размер залочен */
+.seg.locked { opacity: 0.45; }
+.seg.locked .seg-btn { cursor: default; }
+.mode-hint { font-size: 12px; color: var(--text-3); text-align: center; min-height: 16px; }
 
 /* ---- actions ---- */
 

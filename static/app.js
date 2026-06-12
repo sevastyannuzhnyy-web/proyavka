@@ -7,6 +7,7 @@
 
   var dropzone = $("dropzone"), fileInput = $("file");
   var grid = $("grid"), statusEl = $("status"), controls = $("controls");
+  var modeSeg = $("modeSeg"), sizeSeg = $("sizeSeg"), modeHint = $("modeHint");
   var actions = $("actions"), primaryBtn = $("primaryBtn"), addBtn = $("addBtn"), clearBtn = $("clearBtn");
   var overlay = $("overlay"), overlayClose = $("overlayClose");
   var frame = $("frame"), stage = $("stage");
@@ -20,15 +21,15 @@
   var SAVE_LABEL = API.mode === "desktop" ? "Save image"
     : (isTouch ? "Save photo" : "Download full size");
 
-  var state = { scale: 2, models: ["soft"], maxUploadMb: 30, running: false, seq: 0, wakeLock: null };
-  var items = [];          // {id, file, name, blob, previewUrl, status, progress, jobId, beforeUrl, resultUrl, modelIdx, thumbEl, fails}
+  var state = { scale: 2, model: "photo", models: ["photo"], maxUploadMb: 30, running: false, seq: 0, wakeLock: null };
+  var items = [];          // {id,file,name,blob,previewUrl,status,progress,jobId,beforeUrl,resultUrl,model,degraded,thumbEl,fails}
   var current = null;      // item shown in overlay
   var sliderPos = 50, chipTimer = null;
 
   API.meta().then(function (m) {
     if (m.models && m.models.length) state.models = m.models;
     if (m.maxUploadMb) state.maxUploadMb = m.maxUploadMb;
-  }).catch(function () {});
+  }).catch(function () {}).then(setupModes);
 
   /* ---------- choosing files ---------- */
 
@@ -59,7 +60,7 @@
 
   function addItem(file) {
     var item = { id: ++state.seq, file: file, name: file.name || "photo.jpg",
-                 status: "loading", progress: 0, modelIdx: 0 };
+                 status: "loading", progress: 0, model: null };
     items.push(item);
     renderThumb(item);
     shrink(file).then(function (blob) {
@@ -198,7 +199,7 @@
     state.running = true;
     keepAwake();
     items.forEach(function (i) {
-      if (i.status === "staged") { i.status = "queued"; updateThumb(i); }
+      if (i.status === "staged") { i.status = "queued"; i.model = state.model; updateThumb(i); }
     });
     refreshUI();
     pump();
@@ -207,15 +208,22 @@
   function pump() {
     var next = items.find(function (i) { return i.status === "queued"; });
     if (!next) { state.running = false; releaseWake(); refreshUI(); return; }
-    processItem(next, next.modelIdx).then(pump);
+    processItem(next, next.model || state.model).then(pump);
   }
 
-  function processItem(item, modelIdx) {
+  function processItem(item, model) {
     return new Promise(function (resolve) {
-      item.status = "processing"; item.progress = 0; item.fails = 0; updateThumb(item); updatePrimary();
-      var name = item.blob.type === "image/jpeg" ? item.name.replace(/\.\w+$/, ".jpg") : item.name;
-      API.createJob(item.blob, name, state.scale, state.models[modelIdx] || state.models[0])
-        .then(function (body) { item.jobId = body.id; pollItem(item, resolve); })
+      item.status = "processing"; item.progress = 0; item.fails = 0; item.model = model;
+      updateThumb(item); updatePrimary();
+      // restore = лёгкая чистка зерна/шума на клиенте + обычная photo-модель
+      var serverModel = model === "restore" ? "photo" : model;
+      // Max всегда 4× — держим инвариант и на первом проходе, и в retry-цикле
+      var effScale = model === "max" ? 4 : state.scale;
+      var prep = model === "restore" ? cleanForRestore(item.blob) : Promise.resolve(item.blob);
+      prep.then(function (blob) {
+        var name = blob.type === "image/jpeg" ? item.name.replace(/\.\w+$/, ".jpg") : item.name;
+        return API.createJob(blob, name, effScale, serverModel);
+      }).then(function (body) { item.jobId = body.id; pollItem(item, resolve); })
         .catch(function (e) {
           item.status = "error";
           item.error = e && e.friendly ? e.message : "Couldn’t process this one";
@@ -224,11 +232,33 @@
     });
   }
 
+  /* лёгкое подавление зерна/шума перед апскейлом — одинаково в вебе и десктопе */
+  function cleanForRestore(blob) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function () {
+        var c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        var ctx = c.getContext("2d");
+        try { ctx.filter = "blur(0.6px)"; } catch (e) {}
+        ctx.drawImage(img, 0, 0);
+        ctx.filter = "none";
+        var isPng = blob.type === "image/png";
+        c.toBlob(function (b) { URL.revokeObjectURL(url); resolve(b || blob); },
+          isPng ? "image/png" : "image/jpeg", 0.92);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(blob); };
+      img.src = url;
+    });
+  }
+
   function pollItem(item, done) {
     setTimeout(function () {
       API.getJob(item.jobId).then(function (b) {
         if (b.status === "done") {
           item.status = "done"; item.progress = 100;
+          item.degraded = !!b.degraded;   // десктоп без GPU: простое увеличение
           item.beforeUrl = API.originalURL(item.jobId);
           item.resultUrl = API.resultURL(item.jobId);
           updateThumb(item); updatePrimary();
@@ -276,14 +306,20 @@
     current = item;
     overlay.hidden = false;
     document.body.style.overflow = "hidden";
-    retryHint.hidden = state.models.length < 2;
-    retryBtn.hidden = state.models.length < 2;
+    retryHint.hidden = availableModes().length < 2;
+    retryBtn.hidden = availableModes().length < 2;
     showResultInOverlay(item);
   }
 
   function showResultInOverlay(item) {
     saveBtn.disabled = false; saveBtn.textContent = SAVE_LABEL;
     retryBtn.disabled = false; retryBtn.textContent = "Try another look";
+    if (item.degraded) {                  // честно: без GPU это не AI, а простое увеличение
+      retryHint.textContent = "No GPU found — used a basic enlargement";
+      retryHint.hidden = false;
+    } else {
+      retryHint.textContent = "same photo, different style";
+    }
     var b = new Image(), a = new Image(), loaded = 0;
     function ready() {
       if (++loaded < 2) return;
@@ -325,11 +361,13 @@
   retryBtn.addEventListener("click", function () {
     if (!current || state.running) return;
     var item = current;
-    item.modelIdx = (item.modelIdx + 1) % state.models.length;
+    var modes = availableModes();
+    var i = modes.indexOf(item.model);
+    var nextModel = modes[(i + 1) % modes.length] || item.model;
     saveBtn.disabled = true; retryBtn.disabled = true; retryBtn.textContent = "Enhancing…";
     chips.forEach(function (c) { c.hidden = true; });
     state.running = true; refreshUI();
-    processItem(item, item.modelIdx).then(function () {
+    processItem(item, nextModel).then(function () {
       state.running = false; refreshUI();
       if (item.status === "done" && current === item) showResultInOverlay(item);
       else { retryBtn.disabled = false; retryBtn.textContent = "Try another look"; saveBtn.disabled = false; }
@@ -386,9 +424,63 @@
 
   document.querySelectorAll(".seg-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
+      if (btn.disabled) return;               // залочено в режиме Max
       document.querySelectorAll(".seg-btn").forEach(function (b) { b.classList.remove("active"); });
       btn.classList.add("active");
       state.scale = parseInt(btn.dataset.scale, 10);
+    });
+  });
+
+  /* ---------- mode control ---------- */
+
+  var MODE_HINTS = {
+    photo: "Best for everyday photos",
+    art: "Drawings, anime & logos",
+    restore: "Cleans up grain & noise",
+    max: "Maximum quality for print — slower"
+  };
+  var MODE_ORDER = ["photo", "art", "restore", "max"];
+
+  // restore = чистка + photo-модель, поэтому доступен, когда доступна photo
+  function availableModes() {
+    var m = state.models || [];
+    return MODE_ORDER.filter(function (k) {
+      return k === "restore" ? m.indexOf("photo") >= 0 : m.indexOf(k) >= 0;
+    });
+  }
+
+  function applyModeHint() { modeHint.textContent = MODE_HINTS[state.model] || ""; }
+
+  // Max всегда 4× — размер фиксируем и блокируем
+  function applySizeLock() {
+    var lock = state.model === "max";
+    sizeSeg.classList.toggle("locked", lock);
+    document.querySelectorAll(".seg-btn").forEach(function (b) {
+      b.disabled = lock;
+      if (lock) b.classList.toggle("active", b.dataset.scale === "4");
+    });
+    if (lock) state.scale = 4;
+  }
+
+  function setupModes() {
+    var avail = availableModes();
+    if (avail.indexOf(state.model) < 0) state.model = avail[0] || "photo";
+    document.querySelectorAll(".mode-btn").forEach(function (b) {
+      b.hidden = avail.indexOf(b.dataset.model) < 0;
+      b.classList.toggle("active", b.dataset.model === state.model);
+    });
+    modeSeg.hidden = avail.length < 2;
+    applyModeHint();
+    applySizeLock();
+  }
+
+  document.querySelectorAll(".mode-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".mode-btn").forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      state.model = btn.dataset.model;
+      applyModeHint();
+      applySizeLock();
     });
   });
 

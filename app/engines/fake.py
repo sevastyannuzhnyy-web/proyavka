@@ -15,7 +15,7 @@ class FakeEngine(Engine):
     name = "fake"
 
     def available_models(self):
-        return ["soft", "detail", "art"]
+        return ["photo", "art", "max"]
 
     def upscale(self, src: Path, dst: Path, *, scale: int, model: str,
                 progress: ProgressCb) -> None:

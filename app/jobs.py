@@ -34,7 +34,7 @@ class Job:
     progress: int = 0
     error: Optional[str] = None
     scale: int = 2
-    model: str = "soft"
+    model: str = "photo"
     created: float = field(default_factory=time.time)
     src_name: str = "photo"
     out_ext: str = ".jpg"

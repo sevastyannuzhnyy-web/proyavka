@@ -11,12 +11,13 @@ from .. import settings
 from .base import Engine, EngineError, ProgressCb
 
 # Бинарник realesrgan-ncnn-vulkan: быстрый путь, когда есть GPU (/dev/dri).
-# В комплекте бинарника нет general-x4v3, поэтому soft на GPU = x4plus
-# (на GPU он и так быстрый).
+# В комплекте бинарника только x4plus и x4plus-anime (general-x4v3 там нет).
+# photo и max делят одни веса x4plus; max добавляет TTA (-x) — чище и резче,
+# но в ~8 раз медленнее (на GPU это всё равно секунды).
 MODEL_MAP = {
-    "soft": "realesrgan-x4plus",
-    "detail": "realesrgan-x4plus",
+    "photo": "realesrgan-x4plus",
     "art": "realesrgan-x4plus-anime",
+    "max": "realesrgan-x4plus",
 }
 PERCENT_RE = re.compile(r"(\d{1,3})[.,]\d+%")
 
@@ -44,6 +45,8 @@ class NcnnEngine(Engine):
             "-n", name, "-s", "4",
             "-m", settings.NCNN_MODELS_DIR,
         ]
+        if model == "max":
+            cmd.append("-x")  # TTA: усредняет 8 поворотов/отражений — чище и резче
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
 

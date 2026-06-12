@@ -6,6 +6,19 @@ on:
     tags: ["v*"]
 
 jobs:
+  # Реальный прогон вшитого x64-движка на софтверном Vulkan (lavapipe) —
+  # доказывает, что движок считает на любой x64-Windows, даже без GPU.
+  smoke-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Скачать движок и модели
+        shell: bash
+        run: bash desktop/src-tauri/scripts/fetch-assets.sh x86_64-pc-windows-msvc
+      - name: Реальный смок на софтверном Vulkan
+        shell: bash
+        run: bash desktop/src-tauri/scripts/ci-win-smoke.sh
+
   build:
     strategy:
       fail-fast: false
@@ -34,10 +47,6 @@ jobs:
 
       - name: Установить tauri-cli
         run: cargo install tauri-cli --version "^2" --locked
-
-      # win-smoke.sh оставлен в репо для локального запуска на реальной Windows
-      # с GPU; на GPU-less раннере GitHub софтверный Vulkan (lavapipe) не
-      # инициализируется (vkCreateInstance -9), поэтому в CI его не гоняем.
 
       - name: Собрать
         working-directory: desktop/src-tauri

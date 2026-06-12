@@ -21,15 +21,17 @@ struct Job {
     result_path: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
+    degraded: bool, // true = без GPU отдали простое увеличение Lanczos (не AI)
 }
 
 #[derive(Default)]
 struct Jobs(Mutex<HashMap<String, Job>>);
 
-// ключ модели UI -> имя модели ncnn (в комплекте только эти две)
+// ключ режима UI -> имя модели ncnn (в комплекте только x4plus и x4plus-anime).
+// photo и max делят веса x4plus; max добавляет TTA (-x) — чище/резче, медленнее.
 fn model_name(key: &str) -> Option<&'static str> {
     match key {
-        "soft" | "detail" => Some("realesrgan-x4plus"),
+        "photo" | "max" => Some("realesrgan-x4plus"),
         "art" => Some("realesrgan-x4plus-anime"),
         _ => None,
     }
@@ -53,7 +55,11 @@ fn meta(app: tauri::AppHandle) -> serde_json::Value {
         .map(|d| d.join("resources").join("models"))
         .unwrap_or_default();
     let mut models = vec![];
-    for (key, file) in [("soft", "realesrgan-x4plus"), ("art", "realesrgan-x4plus-anime")] {
+    for (key, file) in [
+        ("photo", "realesrgan-x4plus"),
+        ("art", "realesrgan-x4plus-anime"),
+        ("max", "realesrgan-x4plus"),
+    ] {
         if models_dir.join(format!("{file}.param")).exists() {
             models.push(key);
         }
@@ -75,6 +81,9 @@ async fn create_job(
     model: String,
 ) -> Result<String, String> {
     let name = model_name(&model).ok_or("That option isn’t available")?;
+    // max = максимум качества: TTA + всегда 4× (для печати/баннеров)
+    let tta = model == "max";
+    let eff_scale = if tta { 4 } else { scale };
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
 
     let dir = work_dir(&app).join(&id);
@@ -104,19 +113,20 @@ async fn create_job(
 
     tauri::async_runtime::spawn(async move {
         let res = run_upscale(
-            &app2, &input, &upscaled, name, &models_dir, scale, &result, in_ext, &id2,
+            &app2, &input, &upscaled, name, &models_dir, eff_scale, &result, in_ext, &id2, tta,
         )
         .await;
         let jobs = app2.state::<Jobs>();
         let mut map = jobs.0.lock().unwrap();
         if let Some(job) = map.get_mut(&id2) {
             match res {
-                Ok((w, h)) => {
+                Ok((w, h, degraded)) => {
                     job.status = "done".into();
                     job.progress = 100;
                     job.result_path = Some(result.to_string_lossy().into());
                     job.width = Some(w);
                     job.height = Some(h);
+                    job.degraded = degraded;
                 }
                 Err(e) => {
                     job.status = "error".into();
@@ -127,6 +137,47 @@ async fn create_job(
     });
 
     Ok(id)
+}
+
+// Один запуск sidecar. Возвращает true, если файл результата появился.
+async fn run_ncnn(
+    app: &tauri::AppHandle,
+    input: &PathBuf,
+    upscaled: &PathBuf,
+    model: &str,
+    models_dir: &PathBuf,
+    tta: bool,
+    id: &str,
+) -> bool {
+    // снимаем результат прошлого запуска, чтобы upscaled.exists() отражал
+    // именно ЭТОТ прогон (важно для фолбэка и самотеста с общим каталогом)
+    let _ = std::fs::remove_file(upscaled);
+    let mut args: Vec<String> = vec![
+        "-i".into(), input.to_string_lossy().into(),
+        "-o".into(), upscaled.to_string_lossy().into(),
+        "-n".into(), model.into(),
+        "-s".into(), "4".into(),
+        "-m".into(), models_dir.to_string_lossy().into(),
+    ];
+    if tta {
+        args.push("-x".into()); // TTA: 8 поворотов/отражений усредняются — чище и резче
+    }
+    let cmd = match app.shell().sidecar("realesrgan-ncnn-vulkan") {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let cmd = cmd.args(args);
+    if let Ok((mut rx, _child)) = cmd.spawn() {
+        while let Some(event) = rx.recv().await {
+            if let CommandEvent::Stderr(line) = event {
+                let text = String::from_utf8_lossy(&line);
+                if let Some(p) = parse_percent(&text) {
+                    update_progress(app, id, (p as f32 * 0.95) as i32);
+                }
+            }
+        }
+    }
+    upscaled.exists()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -140,31 +191,21 @@ async fn run_upscale(
     result: &PathBuf,
     out_ext: &str,
     id: &str,
-) -> Result<(u32, u32), String> {
-    let sidecar = app
-        .shell()
-        .sidecar("realesrgan-ncnn-vulkan")
-        .map_err(|e| e.to_string())?
-        .args([
-            "-i", &input.to_string_lossy(),
-            "-o", &upscaled.to_string_lossy(),
-            "-n", model,
-            "-s", "4",
-            "-m", &models_dir.to_string_lossy(),
-        ]);
-
-    let (mut rx, _child) = sidecar.spawn().map_err(|e| e.to_string())?;
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Stderr(line) = event {
-            let text = String::from_utf8_lossy(&line);
-            if let Some(p) = parse_percent(&text) {
-                update_progress(app, id, (p as f32 * 0.95) as i32);
-            }
-        }
-    }
-
-    if !upscaled.exists() {
-        return Err("Processing failed — please try again".into());
+    tta: bool,
+) -> Result<(u32, u32, bool), String> {
+    // обычный путь: видеокарта/драйвер выбираются автоматически
+    let ok = run_ncnn(app, input, upscaled, model, models_dir, tta, id).await;
+    // фолбэк: нет подходящего GPU/драйвера — отдаём простое увеличение Lanczos,
+    // чтобы приложение не падало с ошибкой. degraded=true → UI честно это пометит.
+    if !ok {
+        let src = image::open(input).map_err(|e| e.to_string())?;
+        let img = src.resize_exact(
+            src.width() * scale as u32,
+            src.height() * scale as u32,
+            image::imageops::FilterType::Lanczos3,
+        );
+        save_image(&img, result, out_ext)?;
+        return Ok((img.width(), img.height(), true));
     }
 
     // scale 2 = апскейл 4х + даунскейл вдвое; result в исходном формате
@@ -172,15 +213,19 @@ async fn run_upscale(
     if scale == 2 {
         img = img.resize(img.width() / 2, img.height() / 2, image::imageops::FilterType::Lanczos3);
     }
+    save_image(&img, result, out_ext)?;
+    let _ = std::fs::remove_file(upscaled);
+    Ok((img.width(), img.height(), false))
+}
+
+fn save_image(img: &image::DynamicImage, result: &PathBuf, out_ext: &str) -> Result<(), String> {
     if out_ext == "png" {
-        img.save(result).map_err(|e| e.to_string())?;
+        img.save(result).map_err(|e| e.to_string())
     } else {
         img.to_rgb8()
             .save_with_format(result, image::ImageFormat::Jpeg)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
     }
-    let _ = std::fs::remove_file(upscaled);
-    Ok((img.width(), img.height()))
 }
 
 fn parse_percent(s: &str) -> Option<u32> {
@@ -299,11 +344,11 @@ pub fn run() {
                         .unwrap_or_default();
                     match run_upscale(
                         &handle, &PathBuf::from(&input), &up, "realesrgan-x4plus",
-                        &models, 2, &out, "jpg", "selftest",
+                        &models, 2, &out, "jpg", "selftest", false,
                     )
                     .await
                     {
-                        Ok((w, h)) => println!("SELFTEST OK {}x{} -> {}", w, h, out.display()),
+                        Ok((w, h, _)) => println!("SELFTEST OK {}x{} -> {}", w, h, out.display()),
                         Err(e) => println!("SELFTEST FAIL: {e}"),
                     }
                     std::process::exit(0);

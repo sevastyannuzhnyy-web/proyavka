@@ -33,11 +33,15 @@ def meta():
 @app.post("/api/jobs")
 async def create_job(photo: UploadFile = File(...),
                      scale: int = Form(2),
-                     model: str = Form("soft")):
+                     model: str = Form("photo")):
     if scale not in (2, 4):
         raise HTTPException(400, "Scale must be 2× or 4×")
     if model not in manager.engine.available_models():
         raise HTTPException(400, "That option isn’t available")
+    # Max — всегда максимальный размер; держим инвариант на сервере,
+    # чтобы он не зависел от клиента (десктоп форсит то же самое)
+    if model == "max":
+        scale = 4
     # reject a giant body before reading into RAM (Starlette spools to disk, .size is set)
     if photo.size and photo.size > settings.MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(400, f"File is larger than {settings.MAX_UPLOAD_MB} MB — send a smaller photo")

@@ -10,12 +10,13 @@ from .. import settings
 from .base import Engine, EngineError, ProgressCb
 
 # ключ модели -> (файл весов, размер тайла на CPU)
-# soft — компактная realesr-general-x4v3: быстрая, мягкая, дефолт для CPU
-# detail — RRDB x4plus: медленная, максимум деталей
-# art — x4plus-anime: для рисунков/иллюстраций
+# photo — компактная realesr-general-x4v3: быстрая, мягкая, дефолт для CPU
+# max   — RRDB x4plus: медленная, максимум деталей (на CPU прячется). NB: на
+#         ncnn/GPU max = x4plus + TTA, а здесь TTA нет — просто более тяжёлая модель
+# art   — x4plus-anime: для рисунков/иллюстраций
 MODEL_FILES = {
-    "soft": ("realesr-general-x4v3.pth", 512),
-    "detail": ("RealESRGAN_x4plus.pth", 192),
+    "photo": ("realesr-general-x4v3.pth", 512),
+    "max": ("RealESRGAN_x4plus.pth", 192),
     "art": ("RealESRGAN_x4plus_anime_6B.pth", 256),
 }
 OVERLAP = 16

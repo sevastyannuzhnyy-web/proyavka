@@ -28,7 +28,13 @@
   <p class="status" id="status" hidden></p>
 
   <div class="controls" id="controls" hidden>
-    <div class="seg" role="group" aria-label="output size">
+    <div class="seg seg-mode" id="modeSeg" role="group" aria-label="mode">
+      <button class="mode-btn active" data-model="photo" type="button">Photo</button>
+      <button class="mode-btn" data-model="art" type="button">Art</button>
+      <button class="mode-btn" data-model="restore" type="button">Restore</button>
+      <button class="mode-btn" data-model="max" type="button">Max</button>
+    </div>
+    <div class="seg seg-size" id="sizeSeg" role="group" aria-label="output size">
       <button class="seg-btn active" data-scale="2" type="button">
         <span class="seg-word">For screen</span><span class="seg-mult">2×</span>
       </button>
@@ -36,6 +42,7 @@
         <span class="seg-word">For print</span><span class="seg-mult">4×</span>
       </button>
     </div>
+    <p class="mode-hint" id="modeHint"></p>
   </div>
 
   <div class="actions" id="actions" hidden>
